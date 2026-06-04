@@ -32,6 +32,25 @@ class DictationSessionTests(unittest.TestCase):
         self.assertTrue(stopped["discarded"])
         self.assertEqual(stopped["duration_ms"], 100.0)
 
+    def test_toggle_discards_recording_over_maximum_duration_without_transcribing(self):
+        transcribe_calls = []
+
+        session = DictationSession(
+            Settings(max_recording_ms=1_000, min_recording_ms=0, toggle_cooldown_ms=0),
+            transcribe=lambda _wav, _cleanup, _source: transcribe_calls.append(_wav),
+            recorder_factory=FakeRecorder,
+            clock=StepClock([1.0, 1.0, 2.25, 2.25, 2.25]),
+        )
+
+        session.toggle_recording()
+        stopped = session.toggle_recording()
+
+        self.assertEqual(stopped["action"], "discarded")
+        self.assertTrue(stopped["discarded"])
+        self.assertEqual(stopped["reason"], "max_recording_duration")
+        self.assertEqual(stopped["max_recording_ms"], 1_000)
+        self.assertEqual(transcribe_calls, [])
+
     def test_stop_calls_transcriber_with_recorded_wav_and_source(self):
         calls = []
 

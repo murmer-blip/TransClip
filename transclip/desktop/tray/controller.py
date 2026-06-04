@@ -67,6 +67,10 @@ class TrayController:
             force=force,
         )
 
+    def refresh_history_and_update_menu(self, *, force: bool = False) -> None:
+        self.refresh_history_menu(force=force)
+        self.update_menu()
+
     def run_tray_action(
         self,
         action: Callable[[], object],

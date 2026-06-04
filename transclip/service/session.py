@@ -18,6 +18,8 @@ class Recorder(Protocol):
 
     def stop_to_wav(self, output_path: Path) -> Path: ...
 
+    def discard(self) -> None: ...
+
 
 RecorderFactory = Callable[[Settings], Recorder]
 Transcriber = Callable[[Path, bool | None, str], TranscribeResponse]
@@ -108,12 +110,17 @@ class DictationSession:
             self._recording_started_at = 0.0
 
         duration_ms = (self._clock() - started_at) * 1000
-        discard = duration_ms < self.settings.min_recording_ms
+        over_maximum = (
+            self.settings.max_recording_ms > 0
+            and duration_ms > self.settings.max_recording_ms
+        )
+        discard = duration_ms < self.settings.min_recording_ms or over_maximum
         result = self._finish_recording(
             recorder,
             started_at,
             cleanup=cleanup,
             discard=discard,
+            discard_reason="max_recording_duration" if over_maximum else None,
             source="/record/toggle",
         )
         result["status"] = "ready"
@@ -127,13 +134,19 @@ class DictationSession:
         *,
         cleanup: bool | None,
         discard: bool,
+        discard_reason: str | None = None,
         source: str,
     ) -> RecordSessionResponse:
         duration_ms = round((self._clock() - started_at) * 1000, 3)
+        if discard:
+            recorder.discard()
+            result: RecordSessionResponse = {"status": "ready", "duration_ms": duration_ms, "discarded": True}
+            if discard_reason:
+                result["reason"] = discard_reason
+                result["max_recording_ms"] = self.settings.max_recording_ms
+            return result
         with tempfile.TemporaryDirectory() as tmp:
             wav_path = recorder.stop_to_wav(Path(tmp) / "recording.wav")
-            if discard:
-                return {"status": "ready", "duration_ms": duration_ms, "discarded": True}
             result = dict(self._transcribe(wav_path, cleanup, source))
         result["duration_ms"] = duration_ms
         return result

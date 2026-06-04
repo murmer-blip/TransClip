@@ -44,8 +44,9 @@ def run_python_tray(settings: Settings, explicit_settings_path: Path | None = No
 
     def rebuild_history(entries) -> None:
         history_menu = menu_refs["history_menu"]
-        for child in history_menu.get_children():
+        for child in list(history_menu.get_children()):
             history_menu.remove(child)
+            child.destroy()
         for preview, full_text in entries:
             if not full_text:
                 item = _append_label(history_menu, preview)
@@ -121,6 +122,7 @@ def run_python_tray(settings: Settings, explicit_settings_path: Path | None = No
 
     def build_menu() -> None:
         menu = Gtk.Menu()
+        menu.connect("map", lambda *_args: controller.refresh_history_and_update_menu())
         materialize_tray_menu(
             tray_menu_nodes("Linux"),
             session,
@@ -134,11 +136,10 @@ def run_python_tray(settings: Settings, explicit_settings_path: Path | None = No
                 set_model=session.set_asr_model,
             ),
             action_callbacks=action_callbacks,
-            on_history_open=controller.refresh_history_menu,
+            on_history_open=controller.refresh_history_and_update_menu,
             history_state=history_state,
         )
-        controller.refresh_history_menu()
-        controller.update_menu()
+        controller.refresh_history_and_update_menu()
         menu.show_all()
         indicator.set_menu(menu)
 

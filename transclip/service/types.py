@@ -19,6 +19,7 @@ class ServiceHealthResponse(TypedDict, total=False):
     text_model: str
     language: str
     min_recording_ms: int
+    max_recording_ms: int
     toggle_cooldown_ms: int
     clipboard_restore_delay_ms: int
     restore_clipboard_after_paste: bool
@@ -33,6 +34,7 @@ class RecordSessionResponse(TypedDict, total=False):
     already_recording: bool
     reason: str
     cooldown_ms: int
+    max_recording_ms: int
     history_error: str
     log_error: str
     service_url: str

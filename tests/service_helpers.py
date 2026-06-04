@@ -32,6 +32,7 @@ class FakeRecorder:
     def __init__(self, settings):
         self.settings = settings
         self.started = False
+        self.discarded = False
 
     def start(self):
         self.started = True
@@ -39,6 +40,9 @@ class FakeRecorder:
     def stop_to_wav(self, output_path: Path):
         output_path.write_bytes(b"not really wav")
         return output_path
+
+    def discard(self):
+        self.discarded = True
 
 
 class FakeTextBackend:

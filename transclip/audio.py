@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import time
 import wave
 from contextlib import suppress
@@ -15,7 +16,7 @@ class AudioRecorder:
         self._sd = None
         self._np = None
         self._stream = None
-        self._frames = []
+        self._raw_audio = None
 
     def start(self) -> None:
         try:
@@ -25,13 +26,15 @@ class AudioRecorder:
             raise RuntimeError("Install transclip[audio] for microphone capture.") from exc
         self._np = np
         self._sd = sd
-        self._frames = []
+        self._raw_audio = tempfile.TemporaryFile()  # noqa: SIM115 - closed by stop_to_wav, stop_samples, or discard.
 
         def callback(indata, frames, time, status):
             del frames, time
             if status:
                 return
-            self._frames.append(indata.copy())
+            raw_audio = self._raw_audio
+            if raw_audio is not None:
+                raw_audio.write(indata.tobytes())
 
         try:
             self._stream = sd.InputStream(
@@ -42,21 +45,59 @@ class AudioRecorder:
             )
             self._stream.start()
         except Exception as exc:
+            with suppress(Exception):
+                self.discard()
             raise _recording_start_error(exc) from exc
 
     def stop_to_wav(self, output_path: Path) -> Path:
-        audio = self.stop_samples()
-        write_wav(output_path, audio.tobytes(), self.settings.sample_rate)
+        raw_audio = self._stop_raw_audio()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with raw_audio, wave.open(str(output_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(self.settings.sample_rate)
+            while chunk := raw_audio.read(1024 * 1024):
+                wav.writeframesraw(chunk)
         return output_path
 
     def stop_samples(self):
         if self._stream is None or self._np is None:
             raise RuntimeError("Recorder is not running")
+        with self._stop_raw_audio() as raw_audio:
+            pcm = raw_audio.read()
+            if not pcm:
+                return self._np.zeros((0, 1), dtype="int16")
+            return self._np.frombuffer(pcm, dtype=self._np.int16).reshape(-1, 1).copy()
+
+    def discard(self) -> None:
+        try:
+            self._stop_stream()
+        finally:
+            self._close_raw_audio()
+
+    def _stop_raw_audio(self):
+        if self._stream is None:
+            raise RuntimeError("Recorder is not running")
+        self._stop_stream()
+        raw_audio = self._raw_audio
+        if raw_audio is None:
+            raise RuntimeError("Recorder audio buffer is not available")
+        self._raw_audio = None
+        raw_audio.seek(0)
+        return raw_audio
+
+    def _stop_stream(self) -> None:
+        if self._stream is None:
+            return
         self._stream.stop()
         self._stream.close()
-        audio = self._np.concatenate(self._frames) if self._frames else self._np.zeros((0, 1), dtype="int16")
         self._stream = None
-        return audio
+
+    def _close_raw_audio(self) -> None:
+        raw_audio = self._raw_audio
+        self._raw_audio = None
+        if raw_audio is not None:
+            raw_audio.close()
 
 
 def _recording_start_error(exc: Exception) -> RuntimeError:
