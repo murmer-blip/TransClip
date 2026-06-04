@@ -49,6 +49,9 @@ class FakeMenuItem:
     def show_all(self) -> None:
         return None
 
+    def destroy(self) -> None:
+        return None
+
 
 class FakeMenu:
     def __init__(self):
@@ -240,6 +243,34 @@ class TrayTests(unittest.TestCase):
             history_menu.handlers["map"](history_menu)
             self.assertEqual(read_history.call_count, baseline_reads + 1)
             self.assertEqual(len(history_menu.children), 2)
+
+    def test_recent_transcripts_refresh_on_root_menu_map(self):
+        history_events = [{"text": "Latest transcript"}]
+
+        with (
+            patch.dict(sys.modules, self.modules),
+            patch(
+                "transclip.service.client_health.fetch_service_health_result",
+                return_value=({"status": "ready"}, None),
+            ),
+            patch("transclip.history.read_history", side_effect=[[], history_events]) as read_history,
+            patch("transclip.desktop.tray.menu_update.history_file_signature", side_effect=[123, 456]),
+        ):
+            code = run_python_tray(Settings())
+            indicator = FakeIndicatorFactory.current
+            root_menu = indicator.menus[0]
+            latest_item = menu_item_by_label(indicator, "Copy latest transcript")
+            history_menu = menu_item_by_label(indicator, "Recent transcripts").submenu
+            self.assertEqual(code, 0)
+            self.assertIn("map", root_menu.handlers)
+            self.assertFalse(latest_item.sensitive)
+            baseline_reads = read_history.call_count
+
+            root_menu.handlers["map"](root_menu)
+            self.assertEqual(read_history.call_count, baseline_reads + 1)
+            self.assertEqual(len(history_menu.children), 1)
+            self.assertEqual(history_menu.children[0].label, "Latest transcript")
+            self.assertTrue(latest_item.sensitive)
 
     def test_history_file_signature_uses_mtime(self):
         with tempfile.TemporaryDirectory() as tmp:

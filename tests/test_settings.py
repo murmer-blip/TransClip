@@ -58,6 +58,19 @@ class SettingsTests(unittest.TestCase):
             write_settings(load_settings(path), path)
             self.assertNotIn("max_recording_seconds", path.read_text(encoding="utf-8"))
 
+    def test_legacy_max_recording_seconds_migrates_to_milliseconds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.toml"
+            path.write_text("max_recording_seconds = 60\n", encoding="utf-8")
+
+            settings = load_settings(path)
+            write_settings(settings, path)
+
+            text = path.read_text(encoding="utf-8")
+            self.assertEqual(settings.max_recording_ms, 60_000)
+            self.assertIn("max_recording_ms = 60000", text)
+            self.assertNotIn("max_recording_seconds", text)
+
     def test_set_setting_rejects_removed_max_recording_seconds(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.toml"

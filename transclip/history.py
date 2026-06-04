@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -71,26 +72,30 @@ def append_transcript_history(
     append_history_event(event, path=path)
 
 
+def _parse_history_line(line: str) -> dict[str, Any] | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    try:
+        event = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return event if isinstance(event, dict) else None
+
+
 def read_history(limit: int | None = None, path: Path | None = None) -> list[dict[str, Any]]:
     path = path or history_path()
     if not path.exists():
         return []
-    events: list[dict[str, Any]] = []
+    if limit is not None and limit <= 0:
+        return []
+    events = deque(maxlen=limit) if limit is not None else []
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                event = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
+            event = _parse_history_line(line)
+            if event is not None:
                 events.append(event)
-    events.reverse()
-    if limit is not None:
-        return events[:limit]
-    return events
+    return list(reversed(events))
 
 
 def history_file_signature(path: Path | None = None) -> int | None:

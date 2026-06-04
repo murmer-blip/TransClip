@@ -53,6 +53,7 @@ class TrayControllerTests(unittest.TestCase):
             session = TraySession(Settings(), runtime=FakeRuntime(system="Linux", home="/home/test"))
         view = RecordingView()
         icon_updates: list[str] = []
+        history_refreshes: list[bool] = []
         session.refresh_health = MagicMock()  # type: ignore[method-assign]
         controller = TrayController(
             session,
@@ -61,11 +62,13 @@ class TrayControllerTests(unittest.TestCase):
             history_state=HistoryMenuState(signature=object()),
             on_health_icon=lambda: icon_updates.append(session.health.icon),
         )
+        controller.refresh_history_menu = lambda **kwargs: history_refreshes.append(True)  # type: ignore[method-assign]
 
         controller.refresh_health()
 
         session.refresh_health.assert_called_once()
         self.assertEqual(icon_updates, [session.health.icon])
+        self.assertEqual(history_refreshes, [])
 
     def test_update_menu_enables_copy_latest_from_session_latest(self):
         with patch_linux_gpu_runtime():

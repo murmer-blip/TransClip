@@ -70,6 +70,19 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(event["voice_trigger"], "shell command")
             self.assertEqual(event["shell"]["command"], "ls -la")
 
+    def test_read_history_limit_returns_latest_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "history.jsonl"
+            for index in range(200):
+                append_history_event(
+                    {"timestamp": str(index), "text": f"entry-{index}", "source": "/record/toggle"},
+                    path,
+                )
+
+            events = read_history(limit=3, path=path)
+
+            self.assertEqual([event["text"] for event in events], ["entry-199", "entry-198", "entry-197"])
+
 
 if __name__ == "__main__":
     unittest.main()
