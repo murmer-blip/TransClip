@@ -67,7 +67,7 @@ class RecordingOpsTests(unittest.TestCase):
     def test_stopped_paste_failure_carries_transcript_and_message(self):
         with patch("transclip.recording_ops.paste_transcript", return_value=FakePasteResult()):
             outcome = toggle_recording(
-                Settings(),
+                Settings(paste_injection_delay_ms=0),
                 paste=True,
                 client=FakeClient({"action": "stopped", "status": "ready", "text": "Hello."}),
             )
@@ -76,6 +76,29 @@ class RecordingOpsTests(unittest.TestCase):
         self.assertEqual(outcome.latest_transcript, "Hello.")
         self.assertIn("still on the clipboard", outcome.notification_message)
         self.assertFalse(outcome.payload["paste"]["pasted"])
+
+    def test_stopped_paste_waits_for_hotkey_modifiers_to_release(self):
+        events = []
+
+        def fake_sleep(seconds):
+            events.append(("sleep", seconds))
+
+        def fake_paste(_transcript, _settings):
+            events.append(("paste", 0))
+            return FakePasteResult(pasted=True, error_detail="")
+
+        with (
+            patch("transclip.recording_ops.time.sleep", side_effect=fake_sleep),
+            patch("transclip.recording_ops.paste_transcript", side_effect=fake_paste),
+        ):
+            outcome = toggle_recording(
+                Settings(paste_injection_delay_ms=300),
+                paste=True,
+                client=FakeClient({"action": "stopped", "status": "ready", "text": "Hello."}),
+            )
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(events, [("sleep", 0.3), ("paste", 0)])
 
 
 if __name__ == "__main__":

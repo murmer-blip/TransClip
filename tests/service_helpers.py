@@ -22,8 +22,10 @@ class FakeASR:
 
     def __init__(self, text: str = "hello from ROCm"):
         self.text = text
+        self.calls: list[Path] = []
 
     def transcribe(self, wav_path: Path, keywords: list[str] | None = None) -> TranscriptionResult:
+        self.calls.append(wav_path)
         self.wav_path = wav_path
         self.keywords = keywords
         return TranscriptionResult(self.text, {"asr": 1.0}, self.name, self.model)

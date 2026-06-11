@@ -47,6 +47,26 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(engine.asr_backend.keywords, ["PyTorch", "ROCm"])
             self.assertIn("end_to_end", result["timings_ms"])
 
+    def test_engine_warms_asr_only_when_requested(self):
+        lazy_asr = FakeASR()
+        InferenceEngine(
+            Settings(),
+            asr_backend=lazy_asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+        self.assertEqual(lazy_asr.calls, [])
+
+        warm_asr = FakeASR()
+        InferenceEngine(
+            Settings(sample_rate=16000),
+            asr_backend=warm_asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+            warm_asr=True,
+        )
+
+        self.assertEqual(len(warm_asr.calls), 1)
+        self.assertEqual(warm_asr.keywords, [])
+
     def test_cleanup_text_uses_model_cleanup_when_always_on(self):
         text_backend = FakeTextBackend(["Model cleaned via /cleanup"])
         engine = InferenceEngine(

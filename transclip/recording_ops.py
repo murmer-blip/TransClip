@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass
 from urllib.error import HTTPError, URLError
 
@@ -53,6 +54,10 @@ def toggle_recording(
     result["service_url"] = service_url
     paste_failed_message = ""
     if paste and result.get("action") == "stopped" and result.get("text"):
+        delay_ms = max(0, settings.paste_injection_delay_ms)
+        if delay_ms:
+            # Global shortcut modifiers can still be physically held when fast ASR returns.
+            time.sleep(delay_ms / 1000)
         paste_result = paste_transcript(str(result["text"]), settings)
         result["paste"] = asdict(paste_result)
         if not paste_result.pasted:

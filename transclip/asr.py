@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import platform as py_platform
 import tempfile
 from dataclasses import dataclass
@@ -252,7 +253,6 @@ class GraniteSpeechNarTransformersBackend:
 
     def transcribe_waveform(self, waveform: Any, sample_rate: int = 16000) -> TranscriptionResult:
         """Transcribe a mono float32 waveform (numpy array or torch tensor) at 16 kHz."""
-        del sample_rate
         timings: dict[str, float] = {}
         device = self._device()
         with timed_ms(timings, "asr"):
@@ -261,6 +261,7 @@ class GraniteSpeechNarTransformersBackend:
             feature_extractor, model = self._load(device)
             if not torch.is_tensor(waveform):
                 waveform = torch.from_numpy(waveform)
+            waveform = _pad_nar_waveform_to_bucket(waveform, sample_rate=sample_rate)
             inputs = feature_extractor([waveform], device=device)
             with torch.inference_mode():
                 output = model.generate(**inputs)
@@ -368,6 +369,29 @@ def build_asr_backend(
     else:
         backend = GraniteSpeechTransformersBackend(settings.asr_model, torch_device, **cache_options)
     return backend
+
+
+def _pad_nar_waveform_to_bucket(waveform: Any, sample_rate: int, bucket_seconds: float = 2.0) -> Any:
+    """Pad NAR inputs to stable tensor buckets to avoid first-use shape compiles."""
+    bucket_samples = max(1, int(sample_rate * bucket_seconds))
+    length = int(waveform.shape[-1] if hasattr(waveform, "shape") else len(waveform))
+    if length == 0 or length % bucket_samples == 0:
+        return waveform
+    target = math.ceil(length / bucket_samples) * bucket_samples
+    try:
+        import torch
+    except ImportError:
+        torch = None
+    if torch is not None and torch.is_tensor(waveform):
+        padded = waveform.new_zeros(target)
+        padded[:length] = waveform
+        return padded
+
+    import numpy as np
+
+    padded = np.zeros(target, dtype=getattr(waveform, "dtype", np.float32))
+    padded[:length] = waveform
+    return padded
 
 
 def granite_user_prompt(keywords: list[str] | None = None) -> str:

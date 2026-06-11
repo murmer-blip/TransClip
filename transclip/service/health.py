@@ -17,6 +17,7 @@ _SETTINGS_HEALTH_FIELDS = (
     "min_recording_ms",
     "max_recording_ms",
     "toggle_cooldown_ms",
+    "paste_injection_delay_ms",
     "clipboard_restore_delay_ms",
     "restore_clipboard_after_paste",
 )

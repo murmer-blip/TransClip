@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from time import perf_counter
 
 from transclip.asr import ASRBackend, TranscriptionResult, build_asr_backend
 from transclip.asr_incremental import IncrementalNarSession, incremental_transcription_enabled
-from transclip.audio import AudioRecorder
+from transclip.audio import AudioRecorder, write_wav
 from transclip.best_effort import best_effort
 from transclip.cleanup import (
     CleanupBackend,
@@ -42,6 +43,7 @@ class InferenceEngine:
         cleanup_backend: CleanupBackend | None = None,
         text_backend: TextGenerationBackend | None = None,
         streaming: StreamingDictationAdapter | None = None,
+        warm_asr: bool = False,
     ):
         self.settings = settings
         self.cleanup_backend = cleanup_backend or FaithfulRuleCleanupBackend()
@@ -54,6 +56,8 @@ class InferenceEngine:
         )
         self.debug_capture = DebugCapture(settings)
         self.asr_backend = asr_backend or build_asr_backend(settings)
+        if warm_asr:
+            self.warm_asr()
         self._streaming = streaming if streaming is not None else self._build_incremental_adapter()
         self.dictation_session = DictationSession(
             settings,
@@ -158,6 +162,14 @@ class InferenceEngine:
             source=source,
             record_history=record_history,
         )
+
+    def warm_asr(self) -> None:
+        """Load and compile the ASR backend before the service reports ready."""
+        sample_rate = max(1, self.settings.sample_rate)
+        pcm16_silence = b"\x00\x00" * (sample_rate * 2)
+        with tempfile.TemporaryDirectory(prefix="transclip-warmup-") as tmp:
+            wav_path = write_wav(Path(tmp) / "warmup.wav", pcm16_silence, sample_rate)
+            self.asr_backend.transcribe(wav_path, keywords=[])
 
     def process_asr_result(
         self,

@@ -101,7 +101,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_incremental_transcription_defaults(self):
         settings = Settings()
-        self.assertTrue(settings.incremental_transcription)
+        self.assertFalse(settings.incremental_transcription)
         self.assertEqual(settings.incremental_commit_threshold_s, 10.0)
         self.assertEqual(settings.streaming_chunk_ms, 500)
 

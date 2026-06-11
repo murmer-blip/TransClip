@@ -32,6 +32,7 @@ class Settings:
     models_local_files_only: bool = True
     model_cache_dir: str = ""
     restore_clipboard_after_paste: bool = False
+    paste_injection_delay_ms: int = 250
     clipboard_restore_delay_ms: int = 500
     min_recording_ms: int = 250
     max_recording_ms: int = 300_000
@@ -40,7 +41,7 @@ class Settings:
     debug_capture_dir: str = "debug-captures"
     asr_backend: str = "granite_nar"
     asr_device: str = "auto"
-    incremental_transcription: bool = True
+    incremental_transcription: bool = False
     incremental_commit_threshold_s: float = 10.0
     streaming_chunk_ms: int = 500
     sample_rate: int = 16000
@@ -133,7 +134,11 @@ def settings_to_toml(settings: Settings) -> str:
             "models_local_files_only",
             "model_cache_dir",
         ),
-        ("restore_clipboard_after_paste", "clipboard_restore_delay_ms"),
+        (
+            "restore_clipboard_after_paste",
+            "paste_injection_delay_ms",
+            "clipboard_restore_delay_ms",
+        ),
         ("min_recording_ms", "max_recording_ms", "toggle_cooldown_ms"),
         ("debug_capture", "debug_capture_dir"),
         (

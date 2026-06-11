@@ -1,14 +1,40 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from transclip.settings import Settings, load_settings
 
 from .engine import InferenceEngine
 from .routes import dispatch_get, dispatch_post
+
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _hostname(value: str, *, has_scheme: bool) -> str | None:
+    """Extract the host part of an Origin (with scheme) or Host header (no scheme)."""
+    if not value:
+        return None
+    target = value if has_scheme else f"//{value}"
+    try:
+        return urlsplit(target).hostname
+    except ValueError:
+        return None
+
+
+def _is_local_host(hostname: str | None, extra: frozenset[str]) -> bool:
+    if hostname is None:
+        return False
+    name = hostname.strip().lower()
+    if name in _LOOPBACK_HOSTNAMES or name in extra:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 def create_server(
@@ -16,20 +42,38 @@ def create_server(
     engine: InferenceEngine | None = None,
 ) -> ThreadingHTTPServer:
     settings = settings or load_settings()
-    active_engine = engine or InferenceEngine(settings)
+    active_engine = engine or InferenceEngine(settings, warm_asr=True)
+
+    # The service has no authentication and exposes the microphone, the local
+    # LLM, and arbitrary-file transcription. Without these guards any web page
+    # the user visits could reach http://127.0.0.1:<port> from the browser via
+    # DNS rebinding or CORS and silently drive recording. Allow only loopback
+    # hosts (plus an explicit non-loopback bind) and reject browser-originated
+    # cross-origin requests.
+    configured = settings.host.strip().lower()
+    extra_hosts = frozenset({configured}) if configured else frozenset()
+    # When bound to all interfaces the operator has explicitly opted out of
+    # loopback-only access, so Host pinning is relaxed; Origin rejection stays.
+    enforce_host = configured not in {"0.0.0.0", "::", ""}
 
     class Handler(BaseHTTPRequestHandler):
         def do_OPTIONS(self) -> None:
+            if not self._guard():
+                return
             self.send_response(204)
             self._cors()
             self.end_headers()
 
         def do_GET(self) -> None:
-            response = dispatch_get(active_engine, urlparse(self.path).path)
+            if not self._guard():
+                return
+            response = dispatch_get(active_engine, urlsplit(self.path).path)
             self._json(response.status, response.payload)
 
         def do_POST(self) -> None:
-            path = urlparse(self.path).path
+            if not self._guard():
+                return
+            path = urlsplit(self.path).path
             try:
                 body = self._read_json()
                 response = dispatch_post(active_engine, path, body)
@@ -48,6 +92,21 @@ def create_server(
         def log_message(self, format: str, *args: Any) -> None:
             return
 
+        def _guard(self) -> bool:
+            """Reject browser cross-origin and DNS-rebinding requests."""
+            origin = self.headers.get("origin")
+            if origin is not None and not _is_local_host(
+                _hostname(origin, has_scheme=True), extra_hosts
+            ):
+                self._json(403, {"error": "cross-origin requests are not allowed"})
+                return False
+            if enforce_host and not _is_local_host(
+                _hostname(self.headers.get("host", ""), has_scheme=False), extra_hosts
+            ):
+                self._json(403, {"error": "invalid host header"})
+                return False
+            return True
+
         def _read_json(self) -> dict[str, Any]:
             length = int(self.headers.get("content-length", "0"))
             raw = self.rfile.read(length) if length else b"{}"
@@ -63,7 +122,13 @@ def create_server(
             self.wfile.write(encoded)
 
         def _cors(self) -> None:
-            self.send_header("access-control-allow-origin", "*")
+            origin = self.headers.get("origin")
+            if origin is None or not _is_local_host(
+                _hostname(origin, has_scheme=True), extra_hosts
+            ):
+                return
+            self.send_header("access-control-allow-origin", origin)
+            self.send_header("vary", "origin")
             self.send_header("access-control-allow-methods", "GET, POST, OPTIONS")
             self.send_header("access-control-allow-headers", "content-type")
 
