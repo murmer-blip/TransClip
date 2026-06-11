@@ -30,6 +30,8 @@ class RuntimeProfile:
     supported_runtime_kinds: tuple[ProfileRuntimeKind, ...]
     service_manager: Literal["systemd", "launchd", "task_scheduler", "none"]
     granite_nar_unsupported_reason: str | None = None
+    incremental_transcription_supported: bool = False
+    incremental_transcription_unsupported_reason: str | None = None
     config_dir_name: str = CONFIG_DIR_NAME
     log_dir_name: str = LOG_DIR_NAME
 
@@ -42,6 +44,19 @@ GRANITE_NAR_UNSUPPORTED_WINDOWS = (
     "Granite Speech 4.1 NAR is not supported on Windows. "
     'Set asr_backend = "granite" with ibm-granite/granite-speech-4.1-2b.'
 )
+INCREMENTAL_UNSUPPORTED_MACOS = (
+    "Incremental transcription is pending the NAR-MLX benchmark: "
+    "run scripts/bench_nar_mlx.py on an Apple Silicon Mac "
+    "(gate: warm 8 s pass <= 900 ms) and commit eval/macos/nar-mlx-bench.json."
+)
+INCREMENTAL_UNSUPPORTED_CPU = (
+    "Incremental transcription requires the granite_nar GPU backend; "
+    "CPU-only hosts run batch transcription."
+)
+INCREMENTAL_UNSUPPORTED_WINDOWS = (
+    "granite_nar is not supported on Windows, so incremental transcription is unavailable."
+)
+INCREMENTAL_UNSUPPORTED_PLATFORM = "Incremental transcription is not supported on this platform."
 
 
 def machine_architecture(runtime: PlatformRuntime | None = None) -> str:
@@ -83,6 +98,7 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
                 default_asr_device="auto",
                 supported_runtime_kinds=("torch_cuda", "torch_rocm", "torch_cpu", "file"),
                 service_manager="systemd",
+                incremental_transcription_supported=True,
             )
         return RuntimeProfile(
             profile_id="linux_cpu",
@@ -93,6 +109,7 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
             default_asr_device="cpu",
             supported_runtime_kinds=("torch_cpu", "file"),
             service_manager="systemd",
+            incremental_transcription_unsupported_reason=INCREMENTAL_UNSUPPORTED_CPU,
         )
 
     if system == "Darwin":
@@ -107,6 +124,7 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
                 supported_runtime_kinds=("mlx", "torch_mps", "torch_cpu", "file"),
                 service_manager="launchd",
                 granite_nar_unsupported_reason=GRANITE_NAR_UNSUPPORTED_MACOS,
+                incremental_transcription_unsupported_reason=INCREMENTAL_UNSUPPORTED_MACOS,
             )
         return RuntimeProfile(
             profile_id="darwin_other",
@@ -118,6 +136,7 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
             supported_runtime_kinds=("file",),
             service_manager="launchd",
             granite_nar_unsupported_reason=GRANITE_NAR_UNSUPPORTED_MACOS,
+            incremental_transcription_unsupported_reason=INCREMENTAL_UNSUPPORTED_PLATFORM,
         )
 
     if system == "Windows":
@@ -132,6 +151,7 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
                 supported_runtime_kinds=("torch_cuda", "torch_cpu", "file"),
                 service_manager="task_scheduler",
                 granite_nar_unsupported_reason=GRANITE_NAR_UNSUPPORTED_WINDOWS,
+                incremental_transcription_unsupported_reason=INCREMENTAL_UNSUPPORTED_WINDOWS,
             )
         return RuntimeProfile(
             profile_id="windows_cpu",
@@ -143,6 +163,7 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
             supported_runtime_kinds=("torch_cpu", "file"),
             service_manager="task_scheduler",
             granite_nar_unsupported_reason=GRANITE_NAR_UNSUPPORTED_WINDOWS,
+            incremental_transcription_unsupported_reason=INCREMENTAL_UNSUPPORTED_WINDOWS,
         )
 
     return RuntimeProfile(
@@ -154,4 +175,5 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
         default_asr_device="cpu",
         supported_runtime_kinds=("file",),
         service_manager="none",
+        incremental_transcription_unsupported_reason=INCREMENTAL_UNSUPPORTED_PLATFORM,
     )

@@ -20,6 +20,7 @@ from transclip.settings import Settings, default_config_dir, settings_path
 from .asr import (
     build_backend_checks,
     check_asr_runtime,
+    check_incremental_transcription,
     check_model_cache,
     check_torch_runtime,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "check_audio_debug",
     "check_config_files",
     "check_hotkey_readiness",
+    "check_incremental_transcription",
     "check_microphone_devices",
     "check_model_cache",
     "check_paste_tools",

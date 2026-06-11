@@ -291,6 +291,59 @@ class ServiceTests(unittest.TestCase):
             finally:
                 stop_server(server, thread)
 
+    def test_record_partial_returns_empty_when_not_recording(self):
+        settings = Settings(host="127.0.0.1", port=0)
+        server, thread, host, port = serve_test_engine(settings)
+        try:
+            payload = http_json("GET", f"http://{host}:{port}/record/partial")
+            self.assertEqual(payload["status"], "ready")
+            self.assertEqual(payload["partial_text"], "")
+        finally:
+            stop_server(server, thread)
+
+    def test_record_partial_returns_text_while_recording(self):
+        from transclip.service.streaming import StreamingDictationAdapter
+
+        from tests.service_helpers import FakeStreamingASR, FakeStreamingSessionFactory
+
+        streaming = FakeStreamingASR()
+        factory = FakeStreamingSessionFactory(streaming)
+        settings = Settings(host="127.0.0.1", port=0)
+        engine = InferenceEngine(
+            settings,
+            asr_backend=FakeASR(),
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+        streaming_adapter = StreamingDictationAdapter(
+            settings,
+            factory,
+            engine.process_asr_result,
+        )
+        engine._streaming = streaming_adapter
+        engine.dictation_session = engine.dictation_session.__class__(
+            settings,
+            transcribe=engine._transcribe_for_session,
+            streaming=streaming_adapter,
+        )
+
+        class FakeChunkedRecorder(FakeRecorder):
+            def __init__(self, recorder_settings, *, on_chunk=None, **kwargs):
+                super().__init__(recorder_settings)
+
+            def stop_capture(self):
+                self.discarded = True
+
+        server, thread, host, port = serve_test_engine(settings, engine)
+        try:
+            with patch("transclip.service.streaming.ChunkedAudioRecorder", FakeChunkedRecorder):
+                engine.start_recording()
+            streaming.feed(b"\x00" * 200)
+            payload = http_json("GET", f"http://{host}:{port}/record/partial")
+            self.assertEqual(payload["status"], "recording")
+            self.assertEqual(payload["partial_text"], "word")
+        finally:
+            stop_server(server, thread)
+
     def test_record_toggle_cooldown_ignores_immediate_second_toggle(self):
         settings = Settings(
             host="127.0.0.1",

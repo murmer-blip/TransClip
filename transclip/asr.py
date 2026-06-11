@@ -247,14 +247,20 @@ class GraniteSpeechNarTransformersBackend:
 
     def transcribe(self, wav_path: Path, keywords: list[str] | None = None) -> TranscriptionResult:
         del keywords
+        audio = self.audio_preparer.prepare(wav_path)
+        return self.transcribe_waveform(audio.wav.squeeze(0), sample_rate=audio.sample_rate)
+
+    def transcribe_waveform(self, waveform: Any, sample_rate: int = 16000) -> TranscriptionResult:
+        """Transcribe a mono float32 waveform (numpy array or torch tensor) at 16 kHz."""
+        del sample_rate
         timings: dict[str, float] = {}
         device = self._device()
         with timed_ms(timings, "asr"):
             import torch
 
             feature_extractor, model = self._load(device)
-            audio = self.audio_preparer.prepare(wav_path)
-            waveform = audio.wav.squeeze(0)
+            if not torch.is_tensor(waveform):
+                waveform = torch.from_numpy(waveform)
             inputs = feature_extractor([waveform], device=device)
             with torch.inference_mode():
                 output = model.generate(**inputs)
@@ -352,7 +358,7 @@ def build_asr_backend(
     }
     if backend_kind == "granite_nar":
         backend = GraniteSpeechNarTransformersBackend(settings.asr_model, torch_device, **cache_options)
-    elif backend_kind in {"mlx_audio_whisper", "granite_mlx"}:
+    elif backend_kind in {"mlx_audio_whisper", "granite_mlx", "granite_nar_mlx"}:
         backend = MlxAudioASRBackend(
             settings.asr_model,
             settings,

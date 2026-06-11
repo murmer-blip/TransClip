@@ -42,6 +42,7 @@ def build_health_status(
     asr_model: str,
     cleanup_backend: str,
     dictation_cleanup: str,
+    streaming_partial_supported: bool = False,
     runtime: PlatformRuntime | None = None,
 ) -> ServiceHealthResponse:
     platform_runtime = get_runtime(runtime)
@@ -51,6 +52,7 @@ def build_health_status(
         "asr_model": asr_model,
         "cleanup_backend": cleanup_backend,
         "dictation_cleanup": dictation_cleanup,
+        "streaming_partial_supported": streaming_partial_supported,
         **settings_health_payload(settings, platform_runtime),
     }
 

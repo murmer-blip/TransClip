@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from time import perf_counter
 
-from transclip.asr import ASRBackend, build_asr_backend
+from transclip.asr import ASRBackend, TranscriptionResult, build_asr_backend
+from transclip.asr_incremental import IncrementalNarSession, incremental_transcription_enabled
 from transclip.audio import AudioRecorder
 from transclip.best_effort import best_effort
 from transclip.cleanup import (
@@ -24,6 +25,7 @@ from transclip.transcript_pipeline import TranscriptProcessor, shell_metadata
 from .health import build_health_status, cleanup_labels
 from .serialize import to_cleanup_text_response, to_transcribe_response
 from .session import DictationSession
+from .streaming import StreamingDictationAdapter
 from .types import (
     CleanupTextResponse,
     RecordSessionResponse,
@@ -39,9 +41,9 @@ class InferenceEngine:
         asr_backend: ASRBackend | None = None,
         cleanup_backend: CleanupBackend | None = None,
         text_backend: TextGenerationBackend | None = None,
+        streaming: StreamingDictationAdapter | None = None,
     ):
         self.settings = settings
-        self.asr_backend = asr_backend or build_asr_backend(settings)
         self.cleanup_backend = cleanup_backend or FaithfulRuleCleanupBackend()
         self.text_backend = text_backend or build_text_generation_backend(settings)
         self.transcript_processor = TranscriptProcessor(
@@ -51,10 +53,13 @@ class InferenceEngine:
             shell_command=ShellCommandProcessor(settings, self.text_backend),
         )
         self.debug_capture = DebugCapture(settings)
+        self.asr_backend = asr_backend or build_asr_backend(settings)
+        self._streaming = streaming if streaming is not None else self._build_incremental_adapter()
         self.dictation_session = DictationSession(
             settings,
             transcribe=self._transcribe_for_session,
             recorder_factory=lambda current_settings: AudioRecorder(current_settings),
+            streaming=self._streaming,
         )
 
     def health(self) -> ServiceHealthResponse:
@@ -72,6 +77,7 @@ class InferenceEngine:
             asr_model=self.asr_backend.model,
             cleanup_backend=cleanup_backend,
             dictation_cleanup=dictation_cleanup,
+            streaming_partial_supported=self._streaming is not None,
             runtime=get_runtime(),
         )
 
@@ -112,6 +118,17 @@ class InferenceEngine:
             duration_ms=result.get("duration_ms"),
         )
 
+    def record_partial(self) -> dict[str, object]:
+        partial = self.dictation_session.partial_text()
+        status = self.dictation_session.status()
+        payload: dict[str, object] = {
+            "status": status,
+            "partial_text": partial.text,
+        }
+        if partial.language:
+            payload["language"] = partial.language
+        return payload
+
     def cleanup_text(self, text: str) -> CleanupTextResponse:
         result = self.transcript_processor.cleanup_dictation(text)
         return to_cleanup_text_response(result)
@@ -126,6 +143,33 @@ class InferenceEngine:
     ) -> TranscribeResponse:
         start = perf_counter()
         asr_result = self.asr_backend.transcribe(wav_path, keywords=keywords)
+        end_to_end_ms = round((perf_counter() - start) * 1000, 3)
+        result = self.process_asr_result(
+            asr_result,
+            cleanup=cleanup,
+            source=source,
+            keywords=keywords,
+            end_to_end_ms=end_to_end_ms,
+            wav_path=wav_path,
+        )
+        return _with_optional_history(
+            result,
+            self.settings,
+            source=source,
+            record_history=record_history,
+        )
+
+    def process_asr_result(
+        self,
+        asr_result: TranscriptionResult,
+        *,
+        cleanup: bool | None,
+        source: str,
+        keywords: list[str] | None = None,
+        end_to_end_ms: float | None = None,
+        wav_path: Path | None = None,
+    ) -> TranscribeResponse:
+        start = perf_counter()
         raw_asr = restore_keywords(asr_result.text, keywords or [])
         route = route_voice_mode(
             raw_asr,
@@ -140,37 +184,34 @@ class InferenceEngine:
             asr_model=asr_result.model,
             timings_ms=dict(asr_result.timings_ms),
         )
-        end_to_end_ms = round((perf_counter() - start) * 1000, 3)
+        if end_to_end_ms is None:
+            end_to_end_ms = round((perf_counter() - start) * 1000, 3)
         timings_ms = {**outcome.timings_ms, "end_to_end": end_to_end_ms}
-        capture_dir = self.debug_capture.write(
-            wav_path=wav_path,
-            raw_asr=asr_result.text,
-            cleaned=outcome.text,
-            timings=timings_ms,
-            model_versions={
-                "asr_backend": asr_result.backend,
-                "asr_model": asr_result.model,
-                "cleanup_backend": outcome.cleanup_backend,
-                "text_model_runtime": self.settings.text_model_runtime,
-                "text_model": self.settings.text_model,
-            },
-            metadata={
-                "voice_mode": outcome.voice_mode,
-                "voice_trigger": outcome.voice_trigger,
-                "voice_literal": outcome.voice_literal,
-                "shell": shell_metadata(outcome.shell),
-            },
-        )
-        result = to_transcribe_response(
+        capture_dir = None
+        if wav_path is not None:
+            capture_dir = self.debug_capture.write(
+                wav_path=wav_path,
+                raw_asr=asr_result.text,
+                cleaned=outcome.text,
+                timings=timings_ms,
+                model_versions={
+                    "asr_backend": asr_result.backend,
+                    "asr_model": asr_result.model,
+                    "cleanup_backend": outcome.cleanup_backend,
+                    "text_model_runtime": self.settings.text_model_runtime,
+                    "text_model": self.settings.text_model,
+                },
+                metadata={
+                    "voice_mode": outcome.voice_mode,
+                    "voice_trigger": outcome.voice_trigger,
+                    "voice_literal": outcome.voice_literal,
+                    "shell": shell_metadata(outcome.shell),
+                },
+            )
+        return to_transcribe_response(
             outcome,
             timings_ms=timings_ms,
             debug_capture_dir=str(capture_dir) if capture_dir else None,
-        )
-        return _with_optional_history(
-            result,
-            self.settings,
-            source=source,
-            record_history=record_history,
         )
 
     def _transcribe_for_session(
@@ -185,6 +226,26 @@ class InferenceEngine:
             source=source,
             record_history=False,
         )
+
+    def _build_incremental_adapter(self) -> StreamingDictationAdapter | None:
+        if not incremental_transcription_enabled(self.settings):
+            return None
+        transcribe_waveform = getattr(self.asr_backend, "transcribe_waveform", None)
+        if transcribe_waveform is None:
+            return None
+        settings = self.settings
+        backend = self.asr_backend
+
+        def session_factory() -> IncrementalNarSession:
+            return IncrementalNarSession(
+                backend.transcribe_waveform,
+                sample_rate=settings.sample_rate,
+                commit_threshold_s=settings.incremental_commit_threshold_s,
+                backend_name=backend.name,
+                model_name=backend.model,
+            )
+
+        return StreamingDictationAdapter(settings, session_factory, self.process_asr_result)
 
 
 def _with_optional_history(

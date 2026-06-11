@@ -6,8 +6,10 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import mean
+from time import perf_counter, sleep
 from typing import Any
 
+from transclip.asr_streaming import StreamingASRSessionFactory
 from transclip.service import InferenceEngine
 
 
@@ -47,6 +49,7 @@ class EvalCaseResult:
     paste_attempted: bool | None
     paste_success: bool | None
     timings_ms: dict[str, float]
+    time_to_first_partial_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +150,69 @@ class EvalGatePolicy:
         }
 
 
+def run_incremental_eval(
+    manifest_path: Path,
+    engine: InferenceEngine,
+    session_factory: StreamingASRSessionFactory,
+    *,
+    chunk_ms: int | None = None,
+    pacing: float = 0.0,
+) -> dict[str, Any]:
+    """Eval the incremental session path; pacing=1.0 feeds audio in real time."""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    warmup_cases = manifest.get("warmup_cases", []) if isinstance(manifest, dict) else []
+    cases = manifest["cases"] if isinstance(manifest, dict) else manifest
+    chunk_ms = chunk_ms if chunk_ms is not None else engine.settings.streaming_chunk_ms
+    for case in warmup_cases:
+        _streaming_measurement(
+            manifest_path, session_factory, case, chunk_ms, engine.settings.sample_rate, pacing=pacing
+        )
+    results: list[EvalCaseResult] = []
+    for case in cases:
+        audio_path = resolve_audio_path(manifest_path, case)
+        asr_result, first_partial_ms, finish_ms = _streaming_measurement(
+            manifest_path,
+            session_factory,
+            case,
+            chunk_ms,
+            engine.settings.sample_rate,
+            pacing=pacing,
+        )
+        transcript = engine.process_asr_result(
+            asr_result,
+            cleanup=case.get("cleanup"),
+            source="/eval/incremental",
+            keywords=case.get("keywords"),
+            end_to_end_ms=finish_ms,
+        )
+        reference = case.get("reference")
+        keywords = case.get("keywords", [])
+        cleaned_wer = word_error_rate(reference, transcript["text"]) if reference else None
+        raw_asr_wer = word_error_rate(reference, transcript["raw_asr"]) if reference else None
+        drift_delta = cleanup_drift_delta(raw_asr_wer, cleaned_wer)
+        results.append(
+            EvalCaseResult(
+                audio_path=str(audio_path),
+                text=transcript["text"],
+                raw_asr=transcript["raw_asr"],
+                reference=reference,
+                wer=cleaned_wer,
+                raw_asr_wer=raw_asr_wer,
+                cleanup_drift_wer_delta=drift_delta,
+                cleanup_semantic_drift=is_cleanup_semantic_drift(drift_delta),
+                keyword_preservation=keyword_preservation(transcript["text"], keywords),
+                paste_attempted=optional_bool(case.get("paste_attempted")),
+                paste_success=optional_bool(case.get("paste_success")),
+                timings_ms=transcript["timings_ms"],
+                time_to_first_partial_ms=first_partial_ms,
+            )
+        )
+    summary = summarize(results)
+    summary["summary"]["warmup_cases"] = len(warmup_cases)
+    summary["summary"]["incremental"] = True
+    return summary
+
+
 def run_eval(manifest_path: Path, engine: InferenceEngine) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     warmup_cases = manifest.get("warmup_cases", []) if isinstance(manifest, dict) else []
@@ -182,6 +248,50 @@ def run_eval(manifest_path: Path, engine: InferenceEngine) -> dict[str, Any]:
     return summary
 
 
+def _streaming_measurement(
+    manifest_path: Path,
+    session_factory: StreamingASRSessionFactory,
+    case: dict[str, Any],
+    chunk_ms: int,
+    sample_rate: int,
+    *,
+    pacing: float = 0.0,
+):
+    import soundfile as sf
+
+    from transclip.asr import _linear_resample
+    from transclip.asr_streaming import feed_pcm16_chunks
+
+    audio_path = resolve_audio_path(manifest_path, case)
+    samples, file_rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+    mono = samples.mean(axis=1) if samples.shape[1] > 1 else samples[:, 0]
+    if file_rate != sample_rate:
+        mono = _linear_resample(mono, file_rate, sample_rate)
+    session = session_factory()
+    first_partial_ms: float | None = None
+    started = perf_counter()
+    chunk_sleep = max(0.0, pacing) * chunk_ms / 1000.0
+
+    def after_chunk() -> None:
+        nonlocal first_partial_ms
+        if first_partial_ms is None and session.partial_text.text.strip():
+            first_partial_ms = round((perf_counter() - started) * 1000, 3)
+        if chunk_sleep:
+            sleep(chunk_sleep)
+
+    feed_pcm16_chunks(
+        session,
+        mono,
+        chunk_ms=chunk_ms,
+        sample_rate=sample_rate,
+        after_chunk=after_chunk,
+    )
+    finish_started = perf_counter()
+    result = session.finish()
+    finish_ms = round((perf_counter() - finish_started) * 1000, 3)
+    return result, first_partial_ms, finish_ms
+
+
 def transcribe_case(
     manifest_path: Path,
     engine: InferenceEngine,
@@ -208,6 +318,9 @@ def summarize(results: list[EvalCaseResult]) -> dict[str, Any]:
     drift_deltas = [result.cleanup_drift_wer_delta for result in results if result.cleanup_drift_wer_delta is not None]
     keyword_scores = [result.keyword_preservation for result in results if result.keyword_preservation is not None]
     release_latencies = [result.timings_ms.get("end_to_end", 0.0) for result in results]
+    first_partials = [
+        result.time_to_first_partial_ms for result in results if result.time_to_first_partial_ms is not None
+    ]
     return {
         "summary": {
             "cases": len(results),
@@ -217,6 +330,7 @@ def summarize(results: list[EvalCaseResult]) -> dict[str, Any]:
             "cleanup_semantic_drift_failures": sum(1 for result in results if result.cleanup_semantic_drift),
             "mean_keyword_preservation": mean(keyword_scores) if keyword_scores else None,
             "mean_release_to_ready_ms": mean(release_latencies) if release_latencies else None,
+            "mean_time_to_first_partial_ms": mean(first_partials) if first_partials else None,
             "under_700ms": sum(1 for value in release_latencies if value < 700),
             "under_1500ms": sum(1 for value in release_latencies if value < 1500),
             "paste_attempts": sum(1 for result in results if result.paste_attempted),

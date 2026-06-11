@@ -40,6 +40,9 @@ class Settings:
     debug_capture_dir: str = "debug-captures"
     asr_backend: str = "granite_nar"
     asr_device: str = "auto"
+    incremental_transcription: bool = True
+    incremental_commit_threshold_s: float = 10.0
+    streaming_chunk_ms: int = 500
     sample_rate: int = 16000
     host: str = "127.0.0.1"
     port: int = 8765
@@ -90,6 +93,17 @@ def load_settings(path: Path | None = None, runtime: PlatformRuntime | None = No
     legacy_max_recording_seconds = data.pop("max_recording_seconds", None)
     if legacy_max_recording_seconds is not None and "max_recording_ms" not in data:
         data["max_recording_ms"] = int(float(legacy_max_recording_seconds) * 1000)
+    legacy_chunk_ms = data.pop("qwen_streaming_chunk_ms", None)
+    if legacy_chunk_ms is not None and "streaming_chunk_ms" not in data:
+        data["streaming_chunk_ms"] = int(legacy_chunk_ms)
+    for legacy_key in (
+        "qwen_streaming_chunk_size_sec",
+        "qwen_streaming_unfixed_chunk_num",
+        "qwen_streaming_unfixed_token_num",
+        "qwen_streaming_gpu_memory_utilization",
+        "qwen_streaming_max_new_tokens",
+    ):
+        data.pop(legacy_key, None)
     allowed = {field.name for field in fields(Settings)}
     unknown = sorted(set(data) - allowed)
     if unknown:
@@ -122,7 +136,16 @@ def settings_to_toml(settings: Settings) -> str:
         ("restore_clipboard_after_paste", "clipboard_restore_delay_ms"),
         ("min_recording_ms", "max_recording_ms", "toggle_cooldown_ms"),
         ("debug_capture", "debug_capture_dir"),
-        ("asr_backend", "asr_device", "sample_rate", "host", "port"),
+        (
+            "asr_backend",
+            "asr_device",
+            "incremental_transcription",
+            "incremental_commit_threshold_s",
+            "streaming_chunk_ms",
+            "sample_rate",
+            "host",
+            "port",
+        ),
     ]
     lines: list[str] = []
     for group in groups:

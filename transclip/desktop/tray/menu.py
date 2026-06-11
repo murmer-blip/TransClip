@@ -11,6 +11,7 @@ from transclip.settings import Settings
 TrayAction = Literal[
     "status",
     "toggle",
+    "copy_partial",
     "copy_latest",
     "history",
     "start_service",
@@ -26,6 +27,7 @@ TrayAction = Literal[
 TrayMenuKind = Literal["label", "separator", "action", "submenu"]
 
 TRAY_ACTION_LABELS: dict[TrayAction, str] = {
+    "copy_partial": "Copy partial transcript",
     "copy_latest": "Copy latest transcript",
     "history": "Recent transcripts",
     "start_service": "Start service",
@@ -54,6 +56,7 @@ def tray_menu_nodes(system: str) -> tuple[TrayMenuNode, ...]:
         TrayMenuNode("label", ref="status_item"),
         TrayMenuNode("separator"),
         TrayMenuNode("action", "toggle", "toggle_item"),
+        TrayMenuNode("action", "copy_partial", "partial_item"),
         TrayMenuNode("action", "copy_latest", "latest_item"),
         TrayMenuNode("separator"),
         TrayMenuNode("submenu", "history", "history_menu"),

@@ -19,6 +19,8 @@ from .session import TraySession
 class TrayActionHost(Protocol):
     def toggle_record(self) -> object: ...
 
+    def copy_partial(self) -> None: ...
+
     def copy_latest(self) -> None: ...
 
     def run_tray_action(
@@ -88,6 +90,10 @@ class TrayController:
     def toggle_record(self) -> object:
         return self.run_tray_action(self.session.toggle_record, before_update=self.on_health_icon)
 
+    def copy_partial(self) -> None:
+        self.session.copy_partial()
+        self.update_menu()
+
     def copy_latest(self) -> None:
         self.session.copy_latest()
         self.update_menu()
@@ -113,6 +119,7 @@ def build_tray_action_callbacks(
 ) -> dict[str, Callable[..., Any]]:
     callbacks: dict[str, Callable[..., Any]] = {
         "toggle": lambda *_: controller.toggle_record(),
+        "copy_partial": lambda *_: controller.copy_partial(),
         "copy_latest": lambda *_: controller.copy_latest(),
         "start_service": lambda *_: controller.run_tray_action(session.start_service),
         "restart_service": lambda *_: controller.run_tray_action(session.restart_service),

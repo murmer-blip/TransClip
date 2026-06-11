@@ -1,0 +1,84 @@
+{
+  "description": "Long-recording latency eval: incremental granite NAR vs batch. Cases are concatenations of the real-usage clips with 0.5 s gaps; regenerate with scripts/build_long_recording_eval.py.",
+  "backend": {
+    "asr_backend": "granite_nar",
+    "asr_model": "ibm-granite/granite-speech-4.1-2b-nar"
+  },
+  "thresholds": {
+    "mean_release_to_ready_max_ms": 900,
+    "worst_release_to_ready_max_ms": 1500,
+    "under_700_min_ratio": 0.0,
+    "wer_max": 0.25,
+    "keyword_preservation_min": 0.8
+  },
+  "warmup_cases": [
+    {
+      "audio_path": "../../../../transclip-real-eval/long_recording_01.wav",
+      "cleanup": false
+    }
+  ],
+  "cases": [
+    {
+      "audio_path": "../../../../transclip-real-eval/long_recording_01.wav",
+      "reference": "Please check the Python tray icon after the service reports ready. Set the cleanup runtime to rule for the latency profile. Granite NAR should stay under seven hundred milliseconds after warm up. Add PyTorch, ROCm, and gfx1151 to the technical note. The localhost Python inference service is listening on port eight seven six five. Use wtype on Wayland and xdotool on X eleven when paste injection is needed.",
+      "keywords": [
+        "Python tray",
+        "cleanup",
+        "Granite",
+        "NAR",
+        "PyTorch",
+        "ROCm",
+        "gfx1151",
+        "Python",
+        "wtype",
+        "Wayland",
+        "xdotool"
+      ],
+      "cleanup": true,
+      "duration_s": 37.8
+    },
+    {
+      "audio_path": "../../../../transclip-real-eval/long_recording_02.wav",
+      "reference": "The macOS menu bar item may need accessibility permission for command V. Do not add cloud fallback or transcript telemetry in version one. Keep the Gemma cleanup backend available for quality comparisons. Open the settings file and verify Hugging Face is preserved exactly. Run the unit tests after changing the Python tray. The recent transcripts submenu should keep the last five snippets. Clipboard restoration should wait five hundred milliseconds before replacing text. The app should hide the secondary status window instead of quitting. Use the TheRock nightly index for the Radeon eight zero six zero S. FlashAttention Triton AMD is required for the Granite NAR backend.",
+      "keywords": [
+        "macOS",
+        "telemetry",
+        "Gemma",
+        "Hugging Face",
+        "Python tray",
+        "recent transcripts",
+        "Clipboard",
+        "status window",
+        "TheRock",
+        "Radeon",
+        "FlashAttention",
+        "Triton",
+        "AMD",
+        "Granite",
+        "NAR"
+      ],
+      "cleanup": true,
+      "duration_s": 47.4
+    },
+    {
+      "audio_path": "../../../../transclip-real-eval/long_recording_03.wav",
+      "reference": "The debug capture folder should include audio dot wav and timings dot json. Avoid rewriting llama.cpp as llama.cpp during cleanup. The service health endpoint should include the active hotkey and paste shortcut. Do not treat the Dock as the primary home for this app. Use a Linux panel app indicator and a macOS menu bar status item. The eval manifest includes warmup cases that are excluded from metrics. Keyword preservation should improve recognition of Qwen, MLX, and Transformers. Stop recording when the global shortcut is released. Leave the transcript on the clipboard when paste simulation fails.",
+      "keywords": [
+        "debug capture",
+        "llama.cpp",
+        "health endpoint",
+        "Dock",
+        "Linux",
+        "macOS",
+        "eval manifest",
+        "Qwen",
+        "MLX",
+        "Transformers",
+        "global shortcut",
+        "clipboard"
+      ],
+      "cleanup": true,
+      "duration_s": 50.2
+    }
+  ]
+}

@@ -29,6 +29,10 @@ class WriteClipboard(Protocol):
     def __call__(self, text: str) -> None: ...
 
 
+class FetchPartial(Protocol):
+    def __call__(self, settings: Settings) -> tuple[str, str | None]: ...
+
+
 def _default_fetch_health() -> FetchHealth:
     from transclip.service.client_health import fetch_service_health_result
 
@@ -62,9 +66,23 @@ def _default_write_clipboard() -> WriteClipboard:
     return write
 
 
+def _default_fetch_partial() -> FetchPartial:
+    from transclip.service.client import InferenceClient
+
+    def fetch(settings: Settings) -> tuple[str, str | None]:
+        payload = InferenceClient(settings).record_partial()
+        text = str(payload.get("partial_text") or "")
+        status = str(payload.get("status") or "")
+        error = None if status == "recording" else "not recording"
+        return text, error
+
+    return fetch
+
+
 @dataclass(frozen=True, slots=True)
 class TrayPorts:
     fetch_health: FetchHealth = field(default_factory=_default_fetch_health)
+    fetch_partial: FetchPartial = field(default_factory=_default_fetch_partial)
     toggle_recording: ToggleRecording = field(default_factory=_default_toggle_recording)
     service_action: ServiceAction = field(default_factory=_default_service_action)
     read_history: ReadHistory = field(default_factory=_default_read_history)

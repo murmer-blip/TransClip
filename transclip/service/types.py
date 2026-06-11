@@ -23,6 +23,7 @@ class ServiceHealthResponse(TypedDict, total=False):
     toggle_cooldown_ms: int
     clipboard_restore_delay_ms: int
     restore_clipboard_after_paste: bool
+    streaming_partial_supported: bool
 
 
 class RecordSessionResponse(TypedDict, total=False):

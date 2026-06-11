@@ -14,6 +14,7 @@ from .session import TraySession, can_copy_latest, preview_text
 class TrayMenuSnapshot:
     status_label: str
     toggle_label: str
+    partial_enabled: bool
     latest_enabled: bool
     model_cleanup_label: str
     health_icon: str
@@ -51,9 +52,11 @@ def compute_tray_menu_snapshot(
 ) -> TrayMenuSnapshot:
     health = session.health
     cached = history_state.latest_text if history_state is not None else None
+    partial_enabled = health.recording and bool(session.partial)
     return TrayMenuSnapshot(
         status_label=tray_status_label(health.status, health.detail),
         toggle_label=tray_action_label("toggle", recording=health.recording, settings=session.settings),
+        partial_enabled=partial_enabled,
         latest_enabled=can_copy_latest(session, cached_history_text=cached),
         model_cleanup_label=tray_action_label(
             "model_cleanup",
@@ -87,6 +90,7 @@ def apply_menu_snapshot(
 ) -> None:
     view.set_label("status_item", snapshot.status_label)
     view.set_label("toggle_item", snapshot.toggle_label)
+    view.set_enabled("partial_item", snapshot.partial_enabled)
     view.set_enabled("latest_item", snapshot.latest_enabled)
     view.set_label("model_cleanup_item", snapshot.model_cleanup_label)
     view.set_model_labels(model_rows)

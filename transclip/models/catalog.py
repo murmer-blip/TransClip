@@ -63,6 +63,17 @@ MODEL_CATALOG: tuple[ModelCatalogEntry, ...] = (
         dependency_extra="mlx",
         prefetch_strategy="snapshot_download",
     ),
+    ModelCatalogEntry(
+        model_id="mlx-community/granite-speech-4.1-2b-nar-mlx",
+        backend="granite_nar_mlx",
+        display_name="MLX Granite NAR (benchmark-gated)",
+        runtime_kind="mlx",
+        estimated_bytes=int(4.3 * GIB),
+        supported_platforms=frozenset({"Darwin"}),
+        supported_architectures=frozenset({"arm64", "aarch64"}),
+        dependency_extra="mlx",
+        prefetch_strategy="snapshot_download",
+    ),
 )
 
 SUPPORTED_MODELS = list(MODEL_CATALOG)
@@ -93,6 +104,8 @@ ASR_BACKEND_ALIASES = {
     "mlx_audio": "mlx_audio_whisper",
     "mlx_whisper": "mlx_audio_whisper",
     "granite_mlx": "granite_mlx",
+    "granite_nar_mlx": "granite_nar_mlx",
+    "granite-nar-mlx": "granite_nar_mlx",
 }
 
 
@@ -169,6 +182,9 @@ def validate_asr_model_backend(
     if backend == "granite_nar":
         if "granite-speech" not in model_id or "-nar" not in model_id:
             raise ValueError("Granite NAR ASR requires an ibm-granite granite-speech NAR model")
+    elif backend == "granite_nar_mlx":
+        if "granite-speech" not in model_id or "-nar" not in model_id:
+            raise ValueError("Granite NAR MLX ASR requires a granite-speech NAR MLX model")
     elif backend == "granite":
         if "-nar" in model_id:
             raise ValueError('Use asr_backend = "granite_nar" with Granite NAR models')
