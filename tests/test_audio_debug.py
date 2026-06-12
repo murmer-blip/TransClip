@@ -40,7 +40,7 @@ class FakeInputStream:
     instances: ClassVar[list["FakeInputStream"]] = []
 
     def __init__(self, *, callback, **kwargs):
-        del kwargs
+        self.kwargs = kwargs
         self.callback = callback
         self.stopped = False
         self.closed = False
@@ -97,6 +97,29 @@ class FakeStream:
         self.closed = True
 
 
+class FailingDefaultInputStream(FakeInputStream):
+    def __init__(self, *, callback, **kwargs):
+        if "device" not in kwargs:
+            raise RuntimeError("default input failed")
+        super().__init__(callback=callback, **kwargs)
+
+
+class FakeSoundDevice:
+    InputStream = FailingDefaultInputStream
+    default = SimpleNamespace(device=[None, 2])
+
+    @staticmethod
+    def query_devices(device=None, kind=None):
+        devices = [
+            {"name": "Unavailable Input", "max_input_channels": 0},
+            {"name": "MacBook Air Microphone", "max_input_channels": 1},
+            {"name": "MacBook Air Speakers", "max_input_channels": 0},
+        ]
+        if device is None:
+            return devices
+        return devices[int(device)]
+
+
 class AudioDebugTests(unittest.TestCase):
     def test_audio_recorder_streams_callback_audio_to_wav_without_copying_chunks(self):
         FakeInputStream.instances = []
@@ -121,6 +144,23 @@ class AudioDebugTests(unittest.TestCase):
         self.assertTrue(stream.stopped)
         self.assertTrue(stream.closed)
         self.assertTrue(raw_audio.closed)
+
+    def test_audio_recorder_prefers_configured_input_device_when_default_fails(self):
+        FailingDefaultInputStream.instances = []
+        raw_audio = FakeRawAudio()
+        with (
+            patch.dict("sys.modules", {"sounddevice": FakeSoundDevice}),
+            patch("transclip.audio.tempfile.TemporaryFile", return_value=raw_audio),
+        ):
+            recorder = AudioRecorder(Settings(audio_input_device="MacBook Air Microphone"))
+            recorder.start()
+
+            stream = FailingDefaultInputStream.instances[-1]
+            self.assertEqual(stream.kwargs["device"], 1)
+            recorder.discard()
+
+        self.assertTrue(stream.stopped)
+        self.assertTrue(stream.closed)
 
     def test_audio_recorder_fails_if_running_stream_has_no_audio_buffer(self):
         recorder = AudioRecorder(Settings())

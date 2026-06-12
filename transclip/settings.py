@@ -40,6 +40,7 @@ class Settings:
     debug_capture_dir: str = "debug-captures"
     asr_backend: str = "granite_nar"
     asr_device: str = "auto"
+    audio_input_device: str = ""
     sample_rate: int = 16000
     host: str = "127.0.0.1"
     port: int = 8765
@@ -122,7 +123,7 @@ def settings_to_toml(settings: Settings) -> str:
         ("restore_clipboard_after_paste", "clipboard_restore_delay_ms"),
         ("min_recording_ms", "max_recording_ms", "toggle_cooldown_ms"),
         ("debug_capture", "debug_capture_dir"),
-        ("asr_backend", "asr_device", "sample_rate", "host", "port"),
+        ("asr_backend", "asr_device", "audio_input_device", "sample_rate", "host", "port"),
     ]
     lines: list[str] = []
     for group in groups:
