@@ -159,7 +159,8 @@ Supported MLX ASR models on macOS:
 - `mlx-community/whisper-large-v3-turbo-asr-fp16` (default)
 - `mlx-community/granite-4.0-1b-speech-8bit` (`asr_backend = "granite_mlx"`)
 
-Granite Speech 4.1 NAR is not supported on macOS. Optional Torch/MPS Granite AR
+Granite Speech 4.1 NAR (`asr_backend = "granite_nar"`) is also selectable on
+Apple Silicon and runs via Torch/MPS; it and the optional Torch/MPS Granite AR
 models require `uv sync --extra audio --extra models`.
 
 ### Permissions (macOS TCC)
@@ -245,34 +246,36 @@ preservation at 0.952 and mean WER at 0.192.
 
 ### Incremental transcription (long recordings)
 
-On Linux GPU hosts the `granite_nar` backend transcribes long recordings
+On Linux GPU hosts the `granite_nar` backend can transcribe long recordings
 incrementally while you are still speaking: once the uncommitted buffer
 exceeds ~10 s, audio up to the most recent pause is transcribed in the
 background and trimmed from the buffer, so releasing the key only has to
 process the short residual tail. Measured on gfx1151
 (`eval/real-usage/long-recording-manifest.json`, real-time paced): 38-50 s
 recordings finalize in 287-708 ms versus 1.4-2.0 s for the one-shot batch
-pass, with WER unchanged. Short utterances are unaffected (still a single
-batch pass). Committed text never changes because committed audio is
-physically removed from the buffer.
+pass. Because committed segments are transcribed without later audio context,
+quality may differ slightly from a single batch pass; a paired same-audio
+comparison has not been run yet, so incremental mode is opt-in. Short
+utterances are unaffected (still a single batch pass). Committed text never
+changes because committed audio is physically removed from the buffer.
 
 ```toml
-incremental_transcription = true        # default on supported platforms
+incremental_transcription = true        # opt-in; defaults to false
 incremental_commit_threshold_s = 10.0   # uncommitted audio that triggers a background pass
 streaming_chunk_ms = 500                # mic chunk size fed to the session
 ```
 
 | Platform | Batch default | Incremental | Notes |
 |----------|---------------|-------------|-------|
-| Linux GPU (CUDA/ROCm) | Granite NAR | Yes (default on) | No extra dependencies |
+| Linux GPU (CUDA/ROCm) | Granite NAR | Opt-in | No extra dependencies |
 | Linux/Windows CPU | Granite CPU/AR | No | Requires the granite_nar GPU backend |
 | Windows CUDA | Granite AR | No | granite_nar is not supported on Windows |
 | macOS MLX | MLX Whisper | Pending benchmark | Run `scripts/bench_nar_mlx.py` on an M-series (gate: warm 8 s pass <= 900 ms) |
 
 While recording, `GET /record/partial` and the tray's **Copy partial
 transcript** expose the committed text so far. The final text always runs the
-normal post-ASR pipeline. Set `incremental_transcription = false` to restore
-the exact single-pass batch behavior.
+normal post-ASR pipeline. Leave `incremental_transcription` unset (or set it
+to `false`) for the default single-pass batch behavior.
 
 For fast local plumbing tests
 without downloading a model, point `asr_backend` at a transcript file:

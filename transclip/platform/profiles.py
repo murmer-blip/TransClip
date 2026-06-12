@@ -37,7 +37,7 @@ class RuntimeProfile:
 
 
 GRANITE_NAR_UNSUPPORTED_MACOS = (
-    "Granite Speech 4.1 NAR is not supported on macOS. "
+    "Granite Speech 4.1 NAR requires Apple Silicon on macOS. "
     'Set asr_backend = "mlx_audio_whisper" or choose a supported MLX model.'
 )
 GRANITE_NAR_UNSUPPORTED_WINDOWS = (
@@ -123,7 +123,6 @@ def detect_runtime_profile(runtime: PlatformRuntime | None = None) -> RuntimePro
                 default_asr_device="auto",
                 supported_runtime_kinds=("mlx", "torch_mps", "torch_cpu", "file"),
                 service_manager="launchd",
-                granite_nar_unsupported_reason=GRANITE_NAR_UNSUPPORTED_MACOS,
                 incremental_transcription_unsupported_reason=INCREMENTAL_UNSUPPORTED_MACOS,
             )
         return RuntimeProfile(
