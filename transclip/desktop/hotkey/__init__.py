@@ -11,11 +11,13 @@ __all__ = [
     "build_toggle_invocation",
     "get_gnome_shortcut_status",
     "hotkey_setup_message",
+    "install_macos_hotkey",
     "install_shortcut",
     "macos_hotkey_setup_message",
     "shortcut_readiness",
     "start_windows_hotkey",
     "toggle_log_shell_path",
+    "uninstall_macos_hotkey",
     "windows_hotkey_setup_message",
 ]
 
@@ -40,6 +42,18 @@ def install_shortcut(
         binding=binding,
         runtime=runtime,
     )
+
+
+def install_macos_hotkey(*args, **kwargs):
+    from . import macos
+
+    return macos.install_macos_hotkey(*args, **kwargs)
+
+
+def uninstall_macos_hotkey(*args, **kwargs):
+    from . import macos
+
+    return macos.uninstall_macos_hotkey(*args, **kwargs)
 
 
 def get_gnome_shortcut_status(*args, **kwargs):

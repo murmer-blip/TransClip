@@ -40,18 +40,29 @@ class AudioRecorder:
                 raw_audio.write(indata.tobytes())
             self._on_capture_frame(indata)
 
+        errors: list[str] = []
+        for device in _candidate_input_devices(sd, self.settings.audio_input_device):
+            try:
+                kwargs = {
+                    "samplerate": self.settings.sample_rate,
+                    "channels": 1,
+                    "dtype": "int16",
+                    "callback": callback,
+                }
+                if device is not None:
+                    kwargs["device"] = device
+                self._stream = sd.InputStream(**kwargs)
+                self._stream.start()
+                return
+            except Exception as exc:
+                errors.append(_device_error_detail(sd, device, exc))
+                with suppress(Exception):
+                    self._stop_stream()
         try:
-            self._stream = sd.InputStream(
-                samplerate=self.settings.sample_rate,
-                channels=1,
-                dtype="int16",
-                callback=callback,
-            )
-            self._stream.start()
-        except Exception as exc:
-            with suppress(Exception):
-                self.discard()
-            raise _recording_start_error(exc) from exc
+            self.discard()
+        finally:
+            detail = "; ".join(errors) if errors else "no input devices were attempted"
+            raise _recording_start_error(RuntimeError(detail))
 
     def _on_capture_frame(self, indata) -> None:
         del indata
@@ -238,6 +249,68 @@ def sounddevice_summary() -> str:
         return f"default input={input_device} {name}"
     except Exception as exc:
         return f"sounddevice query failed: {exc}"
+
+
+def _candidate_input_devices(sd, preferred: str) -> list[object]:
+    candidates: list[object] = []
+    preferred = preferred.strip()
+    if preferred:
+        candidates.extend(_matching_input_devices(sd, preferred))
+    default_owner = getattr(sd, "default", None)
+    default = _default_input_device(getattr(default_owner, "device", None))
+    candidates.append(default)
+    candidates.extend(_all_input_devices(sd))
+    seen: set[object] = set()
+    unique: list[object] = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique.append(candidate)
+    return unique or [None]
+
+
+def _matching_input_devices(sd, preferred: str) -> list[object]:
+    if preferred.isdigit():
+        return [int(preferred)]
+    lowered = preferred.lower()
+    matches: list[object] = []
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        return []
+    for index, device in enumerate(devices):
+        if not _is_input_device(device):
+            continue
+        name = str(device.get("name", "") if isinstance(device, dict) else device)
+        if lowered == name.lower() or lowered in name.lower():
+            matches.append(index)
+    return matches
+
+
+def _all_input_devices(sd) -> list[object]:
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        return []
+    return [index for index, device in enumerate(devices) if _is_input_device(device)]
+
+
+def _is_input_device(device: object) -> bool:
+    if isinstance(device, dict):
+        return int(device.get("max_input_channels", 0) or 0) > 0
+    return " in," in str(device) or " in)" in str(device)
+
+
+def _device_error_detail(sd, device: object, exc: Exception) -> str:
+    label = "default"
+    if device not in {None, -1}:
+        label = str(device)
+        with suppress(Exception):
+            info = sd.query_devices(device, "input")
+            if isinstance(info, dict):
+                label = f"{device} {info.get('name', 'unknown')}"
+    return f"{label}: {exc}"
 
 
 def _default_input_device(default: object) -> object:

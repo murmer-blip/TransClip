@@ -17,9 +17,11 @@ class PackageImportTests(unittest.TestCase):
             build_toggle_invocation,
             get_gnome_shortcut_status,
             hotkey_setup_message,
+            install_macos_hotkey,
             install_shortcut,
             shortcut_readiness,
             start_windows_hotkey,
+            uninstall_macos_hotkey,
         )
         from transclip.desktop.paste import SystemClipboard, paste_capability
         from transclip.desktop.tray import run_tray
@@ -36,6 +38,8 @@ class PackageImportTests(unittest.TestCase):
         self.assertTrue(callable(handle_command))
         self.assertTrue(callable(install_daemon))
         self.assertTrue(callable(install_shortcut))
+        self.assertTrue(callable(install_macos_hotkey))
+        self.assertTrue(callable(uninstall_macos_hotkey))
         self.assertTrue(callable(get_gnome_shortcut_status))
         self.assertTrue(callable(shortcut_readiness))
         self.assertTrue(callable(run_tray))

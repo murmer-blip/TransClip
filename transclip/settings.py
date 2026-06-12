@@ -41,6 +41,7 @@ class Settings:
     debug_capture_dir: str = "debug-captures"
     asr_backend: str = "granite_nar"
     asr_device: str = "auto"
+    audio_input_device: str = ""
     incremental_transcription: bool = False
     incremental_commit_threshold_s: float = 10.0
     warm_bucket_shapes_s: int = 16
@@ -134,6 +135,7 @@ def settings_to_toml(settings: Settings) -> str:
         (
             "asr_backend",
             "asr_device",
+            "audio_input_device",
             "incremental_transcription",
             "incremental_commit_threshold_s",
             "warm_bucket_shapes_s",

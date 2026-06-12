@@ -41,6 +41,7 @@ class SettingsTests(unittest.TestCase):
             self.assertTrue(settings.shellcheck_enabled)
             self.assertTrue(settings.models_local_files_only)
             self.assertEqual(settings.model_cache_dir, "")
+            self.assertEqual(settings.audio_input_device, "")
 
     def test_unknown_settings_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -133,6 +134,10 @@ class SettingsTests(unittest.TestCase):
         self.assertIs(coerce_setting_value("cleanup_enabled", "false"), False)
         self.assertIs(coerce_setting_value("voice_model_cleanup_always_on", "on"), True)
         self.assertEqual(coerce_setting_value("sample_rate", "22050"), 22050)
+        self.assertEqual(
+            coerce_setting_value("audio_input_device", "MacBook Air Microphone"),
+            "MacBook Air Microphone",
+        )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.toml"
             write_default_settings(path)
