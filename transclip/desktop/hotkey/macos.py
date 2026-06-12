@@ -471,9 +471,22 @@ if !trusted {
     hotkeyStatus.setStatus("error", "Accessibility required")
 }
 
+var activeEventTap: CFMachPort?
+
+func reenableEventTap() {
+    guard let tap = activeEventTap else {
+        log("event tap re-enable skipped; no active tap")
+        return
+    }
+
+    CGEvent.tapEnable(tap: tap, enable: true)
+    log("event tap re-enabled")
+}
+
 let callback: CGEventTapCallBack = { _, type, event, _ in
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         log("event tap disabled type=\\(type.rawValue)")
+        reenableEventTap()
         return Unmanaged.passUnretained(event)
     }
 
@@ -511,6 +524,7 @@ guard let eventTap = CGEvent.tapCreate(
     exit(0)
 }
 
+activeEventTap = eventTap
 let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)

@@ -72,6 +72,10 @@ class MacOSHotkeyTests(unittest.TestCase):
         self.assertIn("return .labelColor", source)
         self.assertIn("postCommandV", source)
         self.assertIn('writeStateFile("finished", "Pasted")', source)
+        self.assertIn("var activeEventTap: CFMachPort?", source)
+        self.assertIn("activeEventTap = eventTap", source)
+        self.assertIn("CGEvent.tapEnable(tap: tap, enable: true)", source)
+        self.assertIn("event tap re-enabled", source)
         self.assertIn("event tap listening for Option+Space", source)
 
     def test_installer_writes_helper_app_launch_agent_and_wrapper(self):
