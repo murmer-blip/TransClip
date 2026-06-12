@@ -67,7 +67,7 @@ class RecordingOpsTests(unittest.TestCase):
     def test_stopped_paste_failure_carries_transcript_and_message(self):
         with patch("transclip.recording_ops.paste_transcript", return_value=FakePasteResult()):
             outcome = toggle_recording(
-                Settings(),
+                Settings(paste_injection_delay_ms=0),
                 paste=True,
                 client=FakeClient({"action": "stopped", "status": "ready", "text": "Hello."}),
             )
@@ -76,6 +76,57 @@ class RecordingOpsTests(unittest.TestCase):
         self.assertEqual(outcome.latest_transcript, "Hello.")
         self.assertIn("still on the clipboard", outcome.notification_message)
         self.assertFalse(outcome.payload["paste"]["pasted"])
+
+    def test_stopped_paste_waits_for_hotkey_modifiers_to_release(self):
+        events = []
+
+        def fake_sleep(seconds):
+            events.append(("sleep", seconds))
+
+        def fake_paste(_transcript, _settings):
+            events.append(("paste", 0))
+            return FakePasteResult(pasted=True, error_detail="")
+
+        with (
+            patch("transclip.recording_ops.time.sleep", side_effect=fake_sleep),
+            patch("transclip.recording_ops.paste_transcript", side_effect=fake_paste),
+        ):
+            outcome = toggle_recording(
+                Settings(paste_injection_delay_ms=300),
+                paste=True,
+                client=FakeClient({"action": "stopped", "status": "ready", "text": "Hello."}),
+            )
+
+        self.assertTrue(outcome.ok)
+        # The delay is measured from the toggle keypress, so the sleep covers
+        # the remainder of the 300ms window after the (instant) fake round-trip.
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0][0], "sleep")
+        self.assertAlmostEqual(events[0][1], 0.3, delta=0.05)
+        self.assertEqual(events[1], ("paste", 0))
+
+    def test_stopped_paste_skips_sleep_when_round_trip_exceeds_delay(self):
+        events = []
+
+        def fake_paste(_transcript, _settings):
+            events.append(("paste", 0))
+            return FakePasteResult(pasted=True, error_detail="")
+
+        clock = iter([0.0, 1.0])  # toggle start, then post-round-trip check
+
+        with (
+            patch("transclip.recording_ops.time.monotonic", side_effect=lambda: next(clock)),
+            patch("transclip.recording_ops.time.sleep", side_effect=lambda s: events.append(("sleep", s))),
+            patch("transclip.recording_ops.paste_transcript", side_effect=fake_paste),
+        ):
+            outcome = toggle_recording(
+                Settings(paste_injection_delay_ms=300),
+                paste=True,
+                client=FakeClient({"action": "stopped", "status": "ready", "text": "Hello."}),
+            )
+
+        self.assertTrue(outcome.ok)
+        self.assertEqual(events, [("paste", 0)])
 
 
 if __name__ == "__main__":

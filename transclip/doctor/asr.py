@@ -50,6 +50,7 @@ def build_backend_checks(settings: Settings, runtime: PlatformRuntime | None = N
             [
                 check_torch_runtime(settings, runtime),
                 check_asr_runtime(settings),
+                check_incremental_transcription(settings, runtime),
             ]
         )
     elif entry is not None and entry.runtime_kind == "torch":
@@ -161,11 +162,17 @@ def check_asr_runtime(settings: Settings) -> Check:
     except ImportError:
         return Check("asr_runtime", False, "torch is not installed")
     device = resolve_torch_device(settings.asr_device)
+    if device == "mps":
+        return Check(
+            "asr_runtime",
+            True,
+            "Granite NAR on MPS (float32, SDPA attention); no flash-attn required",
+        )
     if device != "cuda":
         return Check(
             "asr_runtime",
             False,
-            "Granite NAR requires CUDA/ROCm with flash-attn; use asr_backend='granite' for CPU",
+            "Granite NAR requires CUDA/ROCm (or MPS on Apple Silicon); use asr_backend='granite' for CPU",
         )
     if getattr(torch.version, "hip", None):
         os.environ.setdefault("FLASH_ATTENTION_TRITON_AMD_ENABLE", "TRUE")
@@ -190,6 +197,32 @@ def check_mlx_import() -> Check:
     except ImportError as exc:
         return Check("mlx_import", False, f"mlx import failed: {exc}; install transclip[mlx]")
     return Check("mlx_import", True, "mlx import passed")
+
+
+def check_incremental_transcription(settings: Settings, runtime: PlatformRuntime | None = None) -> Check:
+    profile = detect_runtime_profile(runtime)
+    if not profile.incremental_transcription_supported:
+        return Check(
+            "incremental_transcription",
+            True,
+            profile.incremental_transcription_unsupported_reason
+            or "incremental transcription is not supported on this platform",
+            required=False,
+        )
+    if not settings.incremental_transcription:
+        return Check(
+            "incremental_transcription",
+            True,
+            "disabled via incremental_transcription = false; recordings use one batch pass",
+            required=False,
+        )
+    return Check(
+        "incremental_transcription",
+        True,
+        "enabled: commit threshold "
+        f"{settings.incremental_commit_threshold_s:g}s, chunk {settings.streaming_chunk_ms}ms",
+        required=False,
+    )
 
 
 def check_mlx_audio_import() -> Check:

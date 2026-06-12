@@ -35,6 +35,7 @@ class TraySession:
         self.runtime = runtime or get_runtime()
         self.ports = ports or default_tray_ports()
         self.latest = ""
+        self.partial = ""
         self.health = TrayHealth(status="starting", recording=False, detail="", icon="ready")
 
     def _update_health(self, **changes: Any) -> None:
@@ -65,6 +66,13 @@ class TraySession:
             return self.health
         status = str((health or {}).get("status", "unknown"))
         recording = status == "recording"
+        streaming_partial = bool((health or {}).get("streaming_partial_supported"))
+        if recording and streaming_partial:
+            partial_text, partial_error = self.ports.fetch_partial(self.settings)
+            if partial_error is None and partial_text:
+                self.partial = partial_text
+        elif not recording:
+            self.partial = ""
         self.set_health_status(
             status=status,
             recording=recording,
@@ -112,6 +120,16 @@ class TraySession:
 
     def copy_latest(self) -> str:
         return self.copy_text(self.latest or latest_history_text(self))
+
+    def copy_partial(self) -> str:
+        if self.partial:
+            return self.copy_text(self.partial)
+        partial_text, error = self.ports.fetch_partial(self.settings)
+        if error is None and partial_text:
+            self.partial = partial_text
+            return self.copy_text(partial_text)
+        self._update_health(detail="No partial transcript available")
+        return self.health.detail
 
     def start_service(self) -> str:
         result = self.ports.service_action("start")

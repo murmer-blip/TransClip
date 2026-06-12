@@ -32,7 +32,8 @@ def build_systemd_unit(settings_path: Path | None = None) -> str:
         "Restart=on-failure",
         "RestartSec=2",
     ]
-    if normalize_asr_backend(settings.asr_backend) == "granite_nar":
+    backend = normalize_asr_backend(settings.asr_backend)
+    if backend == "granite_nar":
         service_lines.extend(
             [
                 "Environment=FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE",

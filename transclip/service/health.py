@@ -17,6 +17,7 @@ _SETTINGS_HEALTH_FIELDS = (
     "min_recording_ms",
     "max_recording_ms",
     "toggle_cooldown_ms",
+    "paste_injection_delay_ms",
     "clipboard_restore_delay_ms",
     "restore_clipboard_after_paste",
 )
@@ -42,6 +43,7 @@ def build_health_status(
     asr_model: str,
     cleanup_backend: str,
     dictation_cleanup: str,
+    streaming_partial_supported: bool = False,
     runtime: PlatformRuntime | None = None,
 ) -> ServiceHealthResponse:
     platform_runtime = get_runtime(runtime)
@@ -51,6 +53,7 @@ def build_health_status(
         "asr_model": asr_model,
         "cleanup_backend": cleanup_backend,
         "dictation_cleanup": dictation_cleanup,
+        "streaming_partial_supported": streaming_partial_supported,
         **settings_health_payload(settings, platform_runtime),
     }
 

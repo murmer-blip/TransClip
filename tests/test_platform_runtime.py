@@ -86,15 +86,24 @@ class PlatformRuntimeTests(unittest.TestCase):
         self.assertEqual(settings.asr_backend, "file:/dev/null")
         self.assertEqual(settings.asr_model, "")
 
-    def test_granite_nar_rejected_on_darwin_arm(self):
+    def test_granite_nar_accepted_on_darwin_arm(self):
         runtime = FakeRuntime(system="Darwin", home=Path("/Users/test"), check_output_text="arm64")
         settings = replace(
             default_settings(runtime),
             asr_backend="granite_nar",
             asr_model="ibm-granite/granite-speech-4.1-2b-nar",
         )
-        with self.assertRaisesRegex(ValueError, "not supported on Darwin"):
-            validate_asr_model_backend(settings.asr_backend, settings.asr_model, runtime)
+        self.assertEqual(
+            validate_asr_model_backend(settings.asr_backend, settings.asr_model, runtime),
+            "granite_nar",
+        )
+
+    def test_granite_nar_rejected_on_darwin_intel(self):
+        runtime = FakeRuntime(system="Darwin", home=Path("/Users/test"), check_output_text="x86_64")
+        with self.assertRaisesRegex(ValueError, "requires aarch64, arm64"):
+            validate_asr_model_backend(
+                "granite_nar", "ibm-granite/granite-speech-4.1-2b-nar", runtime
+            )
 
     def test_supported_catalog_entries_filter_by_platform(self):
         linux_runtime = FakeRuntime(system="Linux", home=Path("/home/user"))
@@ -104,7 +113,7 @@ class PlatformRuntimeTests(unittest.TestCase):
         darwin_ids = {entry.model_id for entry in supported_catalog_entries(darwin_runtime)}
 
         self.assertIn("ibm-granite/granite-speech-4.1-2b-nar", linux_ids)
-        self.assertNotIn("ibm-granite/granite-speech-4.1-2b-nar", darwin_ids)
+        self.assertIn("ibm-granite/granite-speech-4.1-2b-nar", darwin_ids)
         self.assertIn("mlx-community/whisper-large-v3-turbo-asr-fp16", darwin_ids)
         self.assertNotIn("mlx-community/whisper-large-v3-turbo-asr-fp16", linux_ids)
 

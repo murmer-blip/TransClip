@@ -12,6 +12,7 @@ from transclip.asr import (
     MlxAudioASRBackend,
     _configure_rocm_nar_attention_env,
     _granite_nar_dtype,
+    _pad_nar_waveform_to_bucket,
     build_asr_backend,
     granite_user_prompt,
 )
@@ -132,6 +133,22 @@ class ASRTests(unittest.TestCase):
         _configure_rocm_nar_attention_env(os_module, torch, "cpu")
 
         self.assertEqual(environ, {})
+
+    def test_granite_nar_pads_waveform_to_stable_bucket(self):
+        waveform = np.ones(int(1.2 * 16000), dtype=np.float32)
+
+        padded = _pad_nar_waveform_to_bucket(waveform, sample_rate=16000)
+
+        self.assertEqual(len(padded), 2 * 16000)
+        np.testing.assert_allclose(padded[: len(waveform)], waveform)
+        np.testing.assert_allclose(padded[len(waveform) :], 0.0)
+
+    def test_granite_nar_bucket_padding_leaves_exact_bucket_unchanged(self):
+        waveform = np.ones(2 * 16000, dtype=np.float32)
+
+        padded = _pad_nar_waveform_to_bucket(waveform, sample_rate=16000)
+
+        self.assertIs(padded, waveform)
 
     def test_audio_preparer_folds_channels_and_resamples_without_model_runtime(self):
         samples = np.array([[1.0, 3.0], [5.0, 7.0]], dtype=np.float32)

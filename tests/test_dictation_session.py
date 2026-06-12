@@ -1,10 +1,12 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from transclip.service import DictationSession
+from transclip.service.streaming import StreamingDictationAdapter
 from transclip.settings import Settings
 
-from tests.service_helpers import FakeRecorder
+from tests.service_helpers import FakeRecorder, FakeStreamingASR, FakeStreamingSessionFactory
 
 
 class StepClock:
@@ -71,6 +73,45 @@ class DictationSessionTests(unittest.TestCase):
         self.assertEqual(result["text"], "Hello.")
         self.assertEqual(result["duration_ms"], 250.0)
         self.assertEqual(calls[0][1:], (True, "/record/stop", True))
+
+    def test_streaming_finish_uses_adapter_instead_of_wav_transcriber(self):
+        streaming = FakeStreamingASR(final_text="streamed final")
+        factory = FakeStreamingSessionFactory(streaming)
+        settings = Settings(min_recording_ms=0, toggle_cooldown_ms=0)
+        transcribe_calls = []
+
+        def process_asr_result(asr_result, *, cleanup, source, **kwargs):
+            return {
+                "text": asr_result.text,
+                "raw_asr": asr_result.text,
+                "status": "ready",
+                "cleanup": {},
+                "cleanup_enabled": True,
+                "timings_ms": asr_result.timings_ms,
+            }
+
+        adapter = StreamingDictationAdapter(settings, factory, process_asr_result)
+
+        class FakeChunkedRecorder(FakeRecorder):
+            def __init__(self, recorder_settings, *, on_chunk=None, **kwargs):
+                super().__init__(recorder_settings)
+
+            def stop_capture(self):
+                self.discarded = True
+
+        session = DictationSession(
+            settings,
+            transcribe=lambda *_args: transcribe_calls.append(True),
+            streaming=adapter,
+            clock=StepClock([1.0, 1.2]),
+        )
+        with patch("transclip.service.streaming.ChunkedAudioRecorder", FakeChunkedRecorder):
+            session.start_recording()
+        session.partial_text()
+        streaming.feed(b"\x00" * 100)
+        result = session.stop_recording()
+        self.assertEqual(result["text"], "streamed final")
+        self.assertEqual(transcribe_calls, [])
 
 
 if __name__ == "__main__":

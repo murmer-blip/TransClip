@@ -42,6 +42,9 @@ class InferenceClient:
     def record_start(self) -> RecordSessionResponse:
         return json_object_response(self._post("/record/start", {}))
 
+    def record_partial(self) -> dict[str, object]:
+        return json_object_response(self._get("/record/partial"))
+
     def record_stop(
         self,
         cleanup: bool | None = None,

@@ -72,6 +72,23 @@ class ServiceHealthTests(unittest.TestCase):
         self.assertEqual(payload["asr_backend"], "granite")
         self.assertIn("cleanup_enabled", payload)
 
+    def test_build_health_status_includes_streaming_partial_flag(self):
+        with patch_linux_gpu_runtime():
+            runtime = FakeRuntime(system="Linux", home=Path("/home/test"))
+
+        payload = build_health_status(
+            status="ready",
+            settings=Settings(asr_backend="granite_nar"),
+            asr_backend_name="granite-nar-transformers",
+            asr_model="ibm-granite/granite-speech-4.1-2b-nar",
+            cleanup_backend="rule-based",
+            dictation_cleanup="rule",
+            streaming_partial_supported=True,
+            runtime=runtime,
+        )
+
+        self.assertTrue(payload["streaming_partial_supported"])
+
 
 class GtkTrayReexecTests(unittest.TestCase):
     def test_reexec_uses_repo_root_for_pythonpath(self):

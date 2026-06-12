@@ -63,6 +63,32 @@ class DoctorTests(unittest.TestCase):
         ):
             self.assertTrue(check_asr_runtime(Settings()).ok)
 
+    def test_incremental_transcription_check_states(self):
+        from transclip.doctor import check_incremental_transcription
+
+        with patch("transclip.doctor.asr.detect_runtime_profile") as detect:
+            detect.return_value = SimpleNamespace(
+                incremental_transcription_supported=True,
+                incremental_transcription_unsupported_reason=None,
+            )
+            enabled = check_incremental_transcription(Settings(incremental_transcription=True))
+            self.assertTrue(enabled.ok)
+            self.assertIn("enabled", enabled.detail)
+            self.assertIn("10s", enabled.detail)
+
+            disabled = check_incremental_transcription(Settings(incremental_transcription=False))
+            self.assertTrue(disabled.ok)
+            self.assertIn("disabled via incremental_transcription", disabled.detail)
+
+            detect.return_value = SimpleNamespace(
+                incremental_transcription_supported=False,
+                incremental_transcription_unsupported_reason="pending NAR-MLX benchmark",
+            )
+            unsupported = check_incremental_transcription(Settings(incremental_transcription=True))
+            self.assertTrue(unsupported.ok)
+            self.assertFalse(unsupported.required)
+            self.assertIn("pending NAR-MLX benchmark", unsupported.detail)
+
     def test_formatters(self):
         checks = [Check("thing", False, "missing thing")]
         self.assertIn('"name": "thing"', checks_as_json(checks))

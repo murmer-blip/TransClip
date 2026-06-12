@@ -78,6 +78,33 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 set_setting(path, "max_recording_seconds", "60")
 
+    def test_legacy_qwen_streaming_keys_migrate_and_drop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.toml"
+            path.write_text(
+                "qwen_streaming_chunk_ms = 400\n"
+                "qwen_streaming_chunk_size_sec = 2.0\n"
+                "qwen_streaming_unfixed_chunk_num = 2\n"
+                "qwen_streaming_unfixed_token_num = 5\n"
+                "qwen_streaming_gpu_memory_utilization = 0.8\n"
+                "qwen_streaming_max_new_tokens = 32\n",
+                encoding="utf-8",
+            )
+
+            settings = load_settings(path)
+            write_settings(settings, path)
+
+            text = path.read_text(encoding="utf-8")
+            self.assertEqual(settings.streaming_chunk_ms, 400)
+            self.assertIn("streaming_chunk_ms = 400", text)
+            self.assertNotIn("qwen_streaming", text)
+
+    def test_incremental_transcription_defaults(self):
+        settings = Settings()
+        self.assertFalse(settings.incremental_transcription)
+        self.assertEqual(settings.incremental_commit_threshold_s, 10.0)
+        self.assertEqual(settings.streaming_chunk_ms, 500)
+
     def test_platform_helpers_have_defaults(self):
         runtime = FakeRuntime(system="Linux", home=Path("/home/user"))
         settings = Settings()

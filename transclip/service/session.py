@@ -7,9 +7,11 @@ from threading import Lock
 from time import perf_counter
 from typing import Protocol
 
+from transclip.asr_streaming import PartialTranscript
 from transclip.audio import AudioRecorder
 from transclip.settings import Settings
 
+from .streaming import StreamingDictationAdapter
 from .types import RecordSessionResponse, TranscribeResponse
 
 
@@ -17,6 +19,8 @@ class Recorder(Protocol):
     def start(self) -> None: ...
 
     def stop_to_wav(self, output_path: Path) -> Path: ...
+
+    def stop_capture(self) -> None: ...
 
     def discard(self) -> None: ...
 
@@ -33,10 +37,12 @@ class DictationSession:
         transcribe: Transcriber,
         recorder_factory: RecorderFactory | None = None,
         clock: Clock = perf_counter,
+        streaming: StreamingDictationAdapter | None = None,
     ):
         self.settings = settings
         self._transcribe = transcribe
         self._recorder_factory = recorder_factory or AudioRecorder
+        self._streaming = streaming
         self._clock = clock
         self._lock = Lock()
         self._recorder: Recorder | None = None
@@ -47,12 +53,17 @@ class DictationSession:
         with self._lock:
             return "recording" if self._recorder else "ready"
 
+    def partial_text(self) -> PartialTranscript:
+        if self._streaming is None:
+            return PartialTranscript("")
+        return self._streaming.partial_text()
+
     def start_recording(self) -> RecordSessionResponse:
         with self._lock:
             if self._recorder is not None:
                 return {"status": "recording", "already_recording": True}
-            recorder = self._recorder_factory(self.settings)
-            recorder.start()
+            recorder = self._create_recorder()
+            self._start_or_cleanup(recorder)
             self._recorder = recorder
             self._recording_started_at = self._clock()
         return {"status": "recording", "already_recording": False}
@@ -98,8 +109,8 @@ class DictationSession:
                 }
             self._last_toggle_accepted_at = now
             if self._recorder is None:
-                recorder = self._recorder_factory(self.settings)
-                recorder.start()
+                recorder = self._create_recorder()
+                self._start_or_cleanup(recorder)
                 self._recorder = recorder
                 self._recording_started_at = now
                 return {"status": "recording", "action": "started", "already_recording": False}
@@ -140,13 +151,40 @@ class DictationSession:
         duration_ms = round((self._clock() - started_at) * 1000, 3)
         if discard:
             recorder.discard()
+            if self._streaming is not None:
+                self._streaming.on_discard()
             result: RecordSessionResponse = {"status": "ready", "duration_ms": duration_ms, "discarded": True}
             if discard_reason:
                 result["reason"] = discard_reason
                 result["max_recording_ms"] = self.settings.max_recording_ms
             return result
-        with tempfile.TemporaryDirectory() as tmp:
-            wav_path = recorder.stop_to_wav(Path(tmp) / "recording.wav")
-            result = dict(self._transcribe(wav_path, cleanup, source))
+        if self._streaming is not None:
+            if self.settings.debug_capture:
+                with tempfile.TemporaryDirectory() as tmp:
+                    wav_path = recorder.stop_to_wav(Path(tmp) / "recording.wav")
+                    result = dict(self._streaming.finish_transcription(cleanup, source, wav_path=wav_path))
+            else:
+                recorder.stop_capture()
+                result = dict(self._streaming.finish_transcription(cleanup, source))
+        else:
+            with tempfile.TemporaryDirectory() as tmp:
+                wav_path = recorder.stop_to_wav(Path(tmp) / "recording.wav")
+                result = dict(self._transcribe(wav_path, cleanup, source))
         result["duration_ms"] = duration_ms
         return result
+
+    def _create_recorder(self) -> Recorder:
+        if self._streaming is not None:
+            return self._streaming.create_recorder()
+        return self._recorder_factory(self.settings)
+
+    def _start_or_cleanup(self, recorder: Recorder) -> None:
+        # create_recorder may have installed a streaming session (with a live
+        # worker thread); if the mic fails to start, close it instead of
+        # leaking one orphaned session per retry.
+        try:
+            recorder.start()
+        except Exception:
+            if self._streaming is not None:
+                self._streaming.on_discard()
+            raise

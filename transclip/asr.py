@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import platform as py_platform
 import tempfile
 from dataclasses import dataclass
@@ -193,6 +194,9 @@ class GraniteSpeechTransformersBackend:
         return TranscriptionResult(decoded[0].strip(), timings, self.name, self.model)
 
 
+GRANITE_NAR_SAMPLE_RATE = 16000
+
+
 class GraniteSpeechNarTransformersBackend:
     name = "granite-nar-transformers"
 
@@ -247,14 +251,27 @@ class GraniteSpeechNarTransformersBackend:
 
     def transcribe(self, wav_path: Path, keywords: list[str] | None = None) -> TranscriptionResult:
         del keywords
+        audio = self.audio_preparer.prepare(wav_path)
+        return self.transcribe_waveform(audio.wav.squeeze(0), sample_rate=audio.sample_rate)
+
+    def transcribe_waveform(self, waveform: Any, sample_rate: int = 16000) -> TranscriptionResult:
+        """Transcribe a mono float32 waveform (numpy array or torch tensor); resamples to 16 kHz."""
         timings: dict[str, float] = {}
         device = self._device()
         with timed_ms(timings, "asr"):
             import torch
 
             feature_extractor, model = self._load(device)
-            audio = self.audio_preparer.prepare(wav_path)
-            waveform = audio.wav.squeeze(0)
+            if not torch.is_tensor(waveform):
+                waveform = torch.from_numpy(waveform)
+            if sample_rate != GRANITE_NAR_SAMPLE_RATE:
+                import torchaudio
+
+                waveform = torchaudio.functional.resample(
+                    waveform, sample_rate, GRANITE_NAR_SAMPLE_RATE
+                )
+                sample_rate = GRANITE_NAR_SAMPLE_RATE
+            waveform = _pad_nar_waveform_to_bucket(waveform, sample_rate=sample_rate)
             inputs = feature_extractor([waveform], device=device)
             with torch.inference_mode():
                 output = model.generate(**inputs)
@@ -352,7 +369,7 @@ def build_asr_backend(
     }
     if backend_kind == "granite_nar":
         backend = GraniteSpeechNarTransformersBackend(settings.asr_model, torch_device, **cache_options)
-    elif backend_kind in {"mlx_audio_whisper", "granite_mlx"}:
+    elif backend_kind in {"mlx_audio_whisper", "granite_mlx", "granite_nar_mlx"}:
         backend = MlxAudioASRBackend(
             settings.asr_model,
             settings,
@@ -362,6 +379,29 @@ def build_asr_backend(
     else:
         backend = GraniteSpeechTransformersBackend(settings.asr_model, torch_device, **cache_options)
     return backend
+
+
+def _pad_nar_waveform_to_bucket(waveform: Any, sample_rate: int, bucket_seconds: float = 2.0) -> Any:
+    """Pad NAR inputs to stable tensor buckets to avoid first-use shape compiles."""
+    bucket_samples = max(1, int(sample_rate * bucket_seconds))
+    length = int(waveform.shape[-1] if hasattr(waveform, "shape") else len(waveform))
+    if length == 0 or length % bucket_samples == 0:
+        return waveform
+    target = math.ceil(length / bucket_samples) * bucket_samples
+    try:
+        import torch
+    except ImportError:
+        torch = None
+    if torch is not None and torch.is_tensor(waveform):
+        padded = waveform.new_zeros(target)
+        padded[:length] = waveform
+        return padded
+
+    import numpy as np
+
+    padded = np.zeros(target, dtype=getattr(waveform, "dtype", np.float32))
+    padded[:length] = waveform
+    return padded
 
 
 def granite_user_prompt(keywords: list[str] | None = None) -> str:

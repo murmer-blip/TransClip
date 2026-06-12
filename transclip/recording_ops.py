@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass
 from urllib.error import HTTPError, URLError
 
@@ -39,6 +40,7 @@ def toggle_recording(
 ) -> ToggleOutcome:
     client = client or InferenceClient(settings)
     service_url = getattr(client, "base_url", f"http://{settings.host}:{settings.port}")
+    toggle_started = time.monotonic()
     try:
         result = client.record_toggle()
     except HTTPError as exc:
@@ -53,6 +55,13 @@ def toggle_recording(
     result["service_url"] = service_url
     paste_failed_message = ""
     if paste and result.get("action") == "stopped" and result.get("text"):
+        # Global shortcut modifiers can still be physically held when fast ASR
+        # returns; wait out the remainder of the window measured from the
+        # toggle keypress, not a flat sleep after the ASR round-trip.
+        elapsed_ms = (time.monotonic() - toggle_started) * 1000
+        remaining_ms = settings.paste_injection_delay_ms - elapsed_ms
+        if remaining_ms > 0:
+            time.sleep(remaining_ms / 1000)
         paste_result = paste_transcript(str(result["text"]), settings)
         result["paste"] = asdict(paste_result)
         if not paste_result.pasted:

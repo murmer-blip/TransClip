@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib import request
 
 from transclip.asr import TranscriptionResult
+from transclip.asr_streaming import PartialTranscript
 from transclip.cleanup import FaithfulRuleCleanupBackend
 from transclip.service import InferenceEngine, create_server
 from transclip.settings import Settings
@@ -21,11 +22,58 @@ class FakeASR:
 
     def __init__(self, text: str = "hello from ROCm"):
         self.text = text
+        self.calls: list[Path] = []
 
     def transcribe(self, wav_path: Path, keywords: list[str] | None = None) -> TranscriptionResult:
+        self.calls.append(wav_path)
         self.wav_path = wav_path
         self.keywords = keywords
         return TranscriptionResult(self.text, {"asr": 1.0}, self.name, self.model)
+
+
+class FakeStreamingASR:
+    """Test double for StreamingASRSession; no heavy imports at load time."""
+
+    name = "fake-streaming"
+    model = "fake-streaming-model"
+
+    def __init__(self, *, final_text: str = "hello streaming"):
+        self._partial = PartialTranscript("")
+        self._final_text = final_text
+        self._chunks: list[bytes] = []
+        self.finished = False
+        self.closed = False
+
+    @property
+    def partial_text(self) -> PartialTranscript:
+        return self._partial
+
+    def feed(self, pcm16_mono: bytes) -> None:
+        self._chunks.append(pcm16_mono)
+        words = len(self._chunks)
+        self._partial = PartialTranscript(" ".join(["word"] * words))
+
+    def finish(self) -> TranscriptionResult:
+        self.finished = True
+        return TranscriptionResult(
+            self._final_text,
+            {"asr": float(len(self._chunks))},
+            self.name,
+            self.model,
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeStreamingSessionFactory:
+    def __init__(self, session: FakeStreamingASR | None = None):
+        self.session = session or FakeStreamingASR()
+        self.created = 0
+
+    def __call__(self) -> FakeStreamingASR:
+        self.created += 1
+        return self.session
 
 
 class FakeRecorder:
@@ -42,6 +90,9 @@ class FakeRecorder:
         return output_path
 
     def discard(self):
+        self.discarded = True
+
+    def stop_capture(self):
         self.discarded = True
 
 

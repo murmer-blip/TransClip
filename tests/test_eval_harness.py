@@ -1,15 +1,24 @@
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import numpy as np
 from transclip.eval_harness import (
     cleanup_drift_delta,
     is_cleanup_semantic_drift,
     keyword_preservation,
     run_eval,
+    run_incremental_eval,
     word_error_rate,
 )
+from transclip.service import InferenceEngine
+from transclip.settings import Settings
+
+from tests.service_helpers import FakeASR, FakeStreamingASR, FakeStreamingSessionFactory
 
 
 class FakeEngine:
@@ -98,6 +107,44 @@ class EvalHarnessTests(unittest.TestCase):
         self.assertEqual(result["summary"]["paste_attempts"], 1)
         self.assertEqual(result["summary"]["paste_successes"], 1)
         self.assertEqual(result["summary"]["paste_failures"], 0)
+
+    def test_streaming_eval_records_time_to_first_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wav = root / "measured.wav"
+            wav.write_bytes(b"RIFF")  # content unused; streaming path mocked below
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "cases": [
+                            {
+                                "audio_path": "measured.wav",
+                                "reference": "hello",
+                                "cleanup": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            session = FakeStreamingASR(final_text="hello")
+            factory = FakeStreamingSessionFactory(session)
+            engine = InferenceEngine(
+                Settings(),
+                asr_backend=FakeASR("hello"),
+            )
+            # Stub the module rather than patching soundfile.read so the test
+            # also runs on CI hosts without the audio extras installed.
+            fake_soundfile = types.SimpleNamespace(
+                read=lambda *args, **kwargs: (np.zeros((16000, 1), dtype=np.float32), 16000)
+            )
+            with patch.dict(sys.modules, {"soundfile": fake_soundfile}):
+                result = run_incremental_eval(manifest, engine, factory, chunk_ms=500)
+        self.assertEqual(result["summary"]["incremental"], True)
+        self.assertIsNotNone(result["summary"]["mean_time_to_first_partial_ms"])
+        self.assertIsNotNone(result["results"][0]["time_to_first_partial_ms"])
+        self.assertIn("end_to_end", result["results"][0]["timings_ms"])
 
 
 if __name__ == "__main__":

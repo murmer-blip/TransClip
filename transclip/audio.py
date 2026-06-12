@@ -3,11 +3,14 @@ from __future__ import annotations
 import tempfile
 import time
 import wave
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from .settings import Settings
+
+OnChunkCallback = Callable[[bytes], None]
 
 
 class AudioRecorder:
@@ -35,6 +38,7 @@ class AudioRecorder:
             raw_audio = self._raw_audio
             if raw_audio is not None:
                 raw_audio.write(indata.tobytes())
+            self._on_capture_frame(indata)
 
         try:
             self._stream = sd.InputStream(
@@ -48,6 +52,9 @@ class AudioRecorder:
             with suppress(Exception):
                 self.discard()
             raise _recording_start_error(exc) from exc
+
+    def _on_capture_frame(self, indata) -> None:
+        del indata
 
     def stop_to_wav(self, output_path: Path) -> Path:
         raw_audio = self._stop_raw_audio()
@@ -75,8 +82,12 @@ class AudioRecorder:
         finally:
             self._close_raw_audio()
 
+    def stop_capture(self) -> None:
+        """Stop the mic stream without writing a WAV."""
+        self.discard()
+
     def _stop_raw_audio(self):
-        if self._stream is None:
+        if self._stream is None and self._raw_audio is None:
             raise RuntimeError("Recorder is not running")
         self._stop_stream()
         raw_audio = self._raw_audio
@@ -98,6 +109,67 @@ class AudioRecorder:
         self._raw_audio = None
         if raw_audio is not None:
             raw_audio.close()
+
+
+class ChunkedAudioRecorder(AudioRecorder):
+    """Microphone recorder that flushes fixed-size PCM chunks to a callback."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        on_chunk: OnChunkCallback | None = None,
+        chunk_ms: int | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        super().__init__(settings)
+        self._on_chunk = on_chunk
+        self._chunk_ms = chunk_ms if chunk_ms is not None else settings.streaming_chunk_ms
+        self._clock = clock
+        self._chunk_buffer = bytearray()
+        self._chunk_byte_target = max(
+            2,
+            round(settings.sample_rate * self._chunk_ms / 1000.0) * 2,
+        )
+
+    def start(self) -> None:
+        self._chunk_buffer = bytearray()
+        super().start()
+
+    def _on_capture_frame(self, indata) -> None:
+        if self._on_chunk is None:
+            return
+        self._chunk_buffer.extend(bytes(indata))
+        while len(self._chunk_buffer) >= self._chunk_byte_target:
+            payload = bytes(self._chunk_buffer[: self._chunk_byte_target])
+            del self._chunk_buffer[: self._chunk_byte_target]
+            self._on_chunk(payload)
+
+    def _flush_remaining_chunks(self) -> None:
+        if self._on_chunk is None or not self._chunk_buffer:
+            return
+        self._on_chunk(bytes(self._chunk_buffer))
+        self._chunk_buffer.clear()
+
+    def stop_capture(self) -> None:
+        """Stop the mic stream, then flush pending chunks without writing a WAV.
+
+        The stream must stop first: the capture callback mutates the chunk
+        buffer concurrently, and any frames it delivers after the flush would
+        be silently discarded (clipping the tail of the last word).
+        """
+        self._stop_stream()
+        self._flush_remaining_chunks()
+        self._close_raw_audio()
+
+    def stop_to_wav(self, output_path: Path) -> Path:
+        self._stop_stream()
+        self._flush_remaining_chunks()
+        return super().stop_to_wav(output_path)
+
+    def discard(self) -> None:
+        self._chunk_buffer.clear()
+        super().discard()
 
 
 def _recording_start_error(exc: Exception) -> RuntimeError:
@@ -184,3 +256,19 @@ def write_wav(path: Path, pcm16_mono: bytes, sample_rate: int) -> Path:
         wav.setframerate(sample_rate)
         wav.writeframes(pcm16_mono)
     return path
+
+
+def pcm16_to_float32(pcm16_mono: bytes):
+    import numpy as np
+
+    if not pcm16_mono:
+        return np.zeros(0, dtype=np.float32)
+    samples = np.frombuffer(pcm16_mono, dtype=np.int16).astype(np.float32)
+    return samples / 32768.0
+
+
+def float32_to_pcm16(samples) -> bytes:
+    import numpy as np
+
+    clipped = np.clip(samples, -1.0, 1.0)
+    return (clipped * 32767.0).astype(np.int16).tobytes()

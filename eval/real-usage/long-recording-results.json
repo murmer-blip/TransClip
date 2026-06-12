@@ -1,0 +1,84 @@
+{
+  "summary": {
+    "cases": 3,
+    "mean_wer": 0.21841566815405408,
+    "mean_raw_asr_wer": 0.21841566815405408,
+    "mean_cleanup_drift_wer_delta": 0.0,
+    "cleanup_semantic_drift_failures": 0,
+    "mean_keyword_preservation": 0.8338383838383838,
+    "mean_release_to_ready_ms": 350.15633333333335,
+    "mean_time_to_first_partial_ms": 10004.519,
+    "under_700ms": 3,
+    "under_1500ms": 3,
+    "paste_attempts": 0,
+    "paste_successes": 0,
+    "paste_failures": 0,
+    "warmup_cases": 1,
+    "incremental": true
+  },
+  "results": [
+    {
+      "audio_path": "/home/paulbrav/github_software/granite_speach/eval/real-usage/../../../../transclip-real-eval/long_recording_01.wav",
+      "text": "Please check the python tray icon after the service reports ready. Set the cleanup runtime to rule for the latency profile. Granite nar should stay under the 700 millisecond. After warm up. Pytorch, rockam, and gfx1151 to the technical note. Add the localhost python inference service is listening on port 8765. Use wtype on wayland and xdu tool on x11 when paste injection is needed.",
+      "raw_asr": "please check the python tray icon after the service reports ready. set the cleanup runtime to rule for the latency profile. granite nar should stay under the 700 millisecond. after warm up. pytorch, rockam, and gfx1151 to the technical note. add the localhost python inference service is listening on port 8765. use wtype on wayland and xdu tool on x11 when paste injection is needed.",
+      "reference": "Please check the Python tray icon after the service reports ready. Set the cleanup runtime to rule for the latency profile. Granite NAR should stay under seven hundred milliseconds after warm up. Add PyTorch, ROCm, and gfx1151 to the technical note. The localhost Python inference service is listening on port eight seven six five. Use wtype on Wayland and xdotool on X eleven when paste injection is needed.",
+      "wer": 0.20588235294117646,
+      "raw_asr_wer": 0.20588235294117646,
+      "cleanup_drift_wer_delta": 0.0,
+      "cleanup_semantic_drift": false,
+      "keyword_preservation": 0.8181818181818182,
+      "paste_attempted": null,
+      "paste_success": null,
+      "timings_ms": {
+        "asr": 443.446,
+        "asr_committed_total": 1609.9410000000003,
+        "commits": 4.0,
+        "cleanup": 0.205,
+        "end_to_end": 445.133
+      },
+      "time_to_first_partial_ms": 10004.473
+    },
+    {
+      "audio_path": "/home/paulbrav/github_software/granite_speach/eval/real-usage/../../../../transclip-real-eval/long_recording_02.wav",
+      "text": "MacOS bar item may need accessibility permission for command v. Do not add cloud fallback or transcript telemetry in version 1. Keep gemma clean backend available for quality control. Openpar setting file and verify hugging faces is preserved exactly. Run the unit test after changing the Python tray. The recent transcripts menu should keep the last five steps. Clipboard restoration should wait five hundred milliseconds before replacing text. The app should hide the secondary status window in. Instead of course. TheRock knightley index for Radeon six s. FlashAttention triton amd is required for grant narve.",
+      "raw_asr": "macOS bar item may need accessibility permission for command v. do not add cloud fallback or transcript telemetry in version 1. keep gemma clean backend available for quality control. openpar setting file and verify hugging faces is preserved exactly. run the unit test after changing the Python tray. the recent transcripts menu should keep the last five steps. clipboard restoration should wait five hundred milliseconds before replacing text. the app should hide the secondary status window in. instead of course. TheRock knightley index for Radeon  six s. FlashAttention triton amd is required for grant narve",
+      "reference": "The macOS menu bar item may need accessibility permission for command V. Do not add cloud fallback or transcript telemetry in version one. Keep the Gemma cleanup backend available for quality comparisons. Open the settings file and verify Hugging Face is preserved exactly. Run the unit tests after changing the Python tray. The recent transcripts submenu should keep the last five snippets. Clipboard restoration should wait five hundred milliseconds before replacing text. The app should hide the secondary status window instead of quitting. Use the TheRock nightly index for the Radeon eight zero six zero S. FlashAttention Triton AMD is required for the Granite NAR backend.",
+      "wer": 0.24528301886792453,
+      "raw_asr_wer": 0.24528301886792453,
+      "cleanup_drift_wer_delta": 0.0,
+      "cleanup_semantic_drift": false,
+      "keyword_preservation": 0.9333333333333333,
+      "paste_attempted": null,
+      "paste_success": null,
+      "timings_ms": {
+        "asr": 326.434,
+        "asr_committed_total": 2337.429,
+        "commits": 6.0,
+        "cleanup": 0.107,
+        "end_to_end": 327.985
+      },
+      "time_to_first_partial_ms": 10004.538
+    },
+    {
+      "audio_path": "/home/paulbrav/github_software/granite_speach/eval/real-usage/../../../../transclip-real-eval/long_recording_03.wav",
+      "text": "Debug capture folder should include audio. Wavfile timings. Json. Avoid writing llama++ as llama cpp during cleanup. The service health endpoint should include the active hotkey and paste shortcut. Do not treat the dock as a primary home for this app. Use linux panel app and and and macOS menu bar status item. The eval manifest includes warm-up cases that are excluded from keyword preservation should improve recognition of when, mlx and transform. Stop recording when a global shortcut is released. Leave transcript on the clipboard when past. Simulation simulation fails.",
+      "raw_asr": "debug capture folder should include audio.wavfile timings.json. avoid writing llama++ as llama cpp during cleanup. the service health endpoint should include the active hotkey and paste shortcut. do not treat the dock as a primary home for this app. use linux panel app and and and macOS menu bar status item. the eval manifest includes warm-up cases that are excluded from keyword preservation should improve recognition of when, mlx and transform. stop recording when a global shortcut is released. leave transcript on the clipboard when past. simulation simulation fails",
+      "reference": "The debug capture folder should include audio dot wav and timings dot json. Avoid rewriting llama.cpp as llama.cpp during cleanup. The service health endpoint should include the active hotkey and paste shortcut. Do not treat the Dock as the primary home for this app. Use a Linux panel app indicator and a macOS menu bar status item. The eval manifest includes warmup cases that are excluded from metrics. Keyword preservation should improve recognition of Qwen, MLX, and Transformers. Stop recording when the global shortcut is released. Leave the transcript on the clipboard when paste simulation fails.",
+      "wer": 0.20408163265306123,
+      "raw_asr_wer": 0.20408163265306123,
+      "cleanup_drift_wer_delta": 0.0,
+      "cleanup_semantic_drift": false,
+      "keyword_preservation": 0.75,
+      "paste_attempted": null,
+      "paste_success": null,
+      "timings_ms": {
+        "asr": 276.044,
+        "asr_committed_total": 2722.5480000000002,
+        "commits": 7.0,
+        "cleanup": 0.131,
+        "end_to_end": 277.351
+      },
+      "time_to_first_partial_ms": 10004.546
+    }
+  ]
+}

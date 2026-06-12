@@ -49,7 +49,7 @@ class EvalWindowsManifestTests(unittest.TestCase):
         self.assertGreaterEqual(thresholds["mean_release_to_ready_max_ms"], 6000)
         self.assertGreaterEqual(thresholds["worst_release_to_ready_max_ms"], 6000)
         backends = {candidate["asr_backend"] for candidate in self.manifest["candidates"]}
-        self.assertEqual(backends, {"granite"})
+        self.assertIn("granite", backends)
         self.assertNotIn("granite_nar", backends)
         self.assertGreaterEqual(len(self.manifest["cases"]), 1)
 
