@@ -117,6 +117,7 @@ class MacOSHotkeyTests(unittest.TestCase):
             self.assertIn(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", str(install.app_path)], calls)
             self.assertIn(["launchctl", "bootstrap", "gui/501", str(install.launch_agent_path)], calls)
             self.assertTrue(any("Grant Accessibility" in result.detail for result in results))
+            self.assertFalse(any("System Events" in result.detail for result in results))
             plist_text = normalize_path_text(install.launch_agent_path.read_text(encoding="utf-8"))
             self.assertIn(HOTKEY_LAUNCHD_LABEL, plist_text)
             self.assertIn("TransClipHotkey.app/Contents/MacOS/TransClipHotkey", plist_text)

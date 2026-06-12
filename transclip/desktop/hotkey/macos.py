@@ -608,8 +608,8 @@ def install_macos_hotkey(
         CommandResult(
             True,
             (
-                "Grant Accessibility to TransClipHotkey.app. On first paste, allow "
-                "TransClipHotkey to control System Events."
+                "Grant Accessibility to TransClipHotkey.app so it can observe "
+                "Option+Space and post Command+V."
             ),
         )
     )
