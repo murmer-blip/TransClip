@@ -30,8 +30,10 @@ class MacOSHotkeyTests(unittest.TestCase):
         self.assertIn("LOCK=/tmp/transclip-toggle.lock", script)
         self.assertIn("/record/start", script)
         self.assertIn("/record/stop", script)
+        self.assertIn("MAX_SECONDS=180", script)
+        self.assertIn("STALE_LOCK_SECONDS=240", script)
         self.assertIn("osascript -e", script)
-        self.assertIn("keystroke \"v\" using command down", script)
+        self.assertIn('keystroke "v" using command down', script)
         self.assertIn("stop failed; restarting service", script)
 
     def test_installer_writes_helper_app_launch_agent_and_wrapper(self):

@@ -22,8 +22,8 @@ HOTKEY_BUNDLE_ID = "com.paulbrav.TransClipHotkey"
 HOTKEY_LAUNCHD_LABEL = "com.paulbrav.transclip-hotkey"
 HOTKEY_LOG_NAME = "hotkey.log"
 TOGGLE_WRAPPER_NAME = "transclip-toggle"
-DEFAULT_STOP_TIMEOUT_SECONDS = 60
-STALE_LOCK_SECONDS = 75
+DEFAULT_STOP_TIMEOUT_SECONDS = 180
+STALE_LOCK_SECONDS = 240
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,7 @@ def build_macos_toggle_wrapper(
     cli = f"{python} -m {shlex.quote(IMPORT_PACKAGE + '.cli')}"
     if settings_path:
         cli += f" --settings {shlex.quote(service_settings_path(settings_path))}"
-    restart_command = f"cd {shlex.quote(str(repo_root()))} && {cli} restart >> \"$LOG\" 2>&1"
+    restart_command = f'cd {shlex.quote(str(repo_root()))} && {cli} restart >> "$LOG" 2>&1'
     return f"""#!/bin/sh
 set -u
 

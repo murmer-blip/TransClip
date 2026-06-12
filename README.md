@@ -141,6 +141,9 @@ uv run -m transclip.cli serve
 Requirements: Apple Silicon, native ARM Python 3.12+, macOS 14+, and Xcode
 Command Line Tools for `swiftc`:
 
+For local edit/reinstall workflows, see
+[docs/macos-local-development.md](docs/macos-local-development.md).
+
 ```bash
 xcode-select --install
 ```
