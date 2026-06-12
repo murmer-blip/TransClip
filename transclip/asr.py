@@ -194,6 +194,9 @@ class GraniteSpeechTransformersBackend:
         return TranscriptionResult(decoded[0].strip(), timings, self.name, self.model)
 
 
+GRANITE_NAR_SAMPLE_RATE = 16000
+
+
 class GraniteSpeechNarTransformersBackend:
     name = "granite-nar-transformers"
 
@@ -252,7 +255,7 @@ class GraniteSpeechNarTransformersBackend:
         return self.transcribe_waveform(audio.wav.squeeze(0), sample_rate=audio.sample_rate)
 
     def transcribe_waveform(self, waveform: Any, sample_rate: int = 16000) -> TranscriptionResult:
-        """Transcribe a mono float32 waveform (numpy array or torch tensor) at 16 kHz."""
+        """Transcribe a mono float32 waveform (numpy array or torch tensor); resamples to 16 kHz."""
         timings: dict[str, float] = {}
         device = self._device()
         with timed_ms(timings, "asr"):
@@ -261,6 +264,13 @@ class GraniteSpeechNarTransformersBackend:
             feature_extractor, model = self._load(device)
             if not torch.is_tensor(waveform):
                 waveform = torch.from_numpy(waveform)
+            if sample_rate != GRANITE_NAR_SAMPLE_RATE:
+                import torchaudio
+
+                waveform = torchaudio.functional.resample(
+                    waveform, sample_rate, GRANITE_NAR_SAMPLE_RATE
+                )
+                sample_rate = GRANITE_NAR_SAMPLE_RATE
             waveform = _pad_nar_waveform_to_bucket(waveform, sample_rate=sample_rate)
             inputs = feature_extractor([waveform], device=device)
             with torch.inference_mode():

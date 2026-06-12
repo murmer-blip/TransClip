@@ -63,7 +63,7 @@ class DictationSession:
             if self._recorder is not None:
                 return {"status": "recording", "already_recording": True}
             recorder = self._create_recorder()
-            recorder.start()
+            self._start_or_cleanup(recorder)
             self._recorder = recorder
             self._recording_started_at = self._clock()
         return {"status": "recording", "already_recording": False}
@@ -110,7 +110,7 @@ class DictationSession:
             self._last_toggle_accepted_at = now
             if self._recorder is None:
                 recorder = self._create_recorder()
-                recorder.start()
+                self._start_or_cleanup(recorder)
                 self._recorder = recorder
                 self._recording_started_at = now
                 return {"status": "recording", "action": "started", "already_recording": False}
@@ -177,3 +177,14 @@ class DictationSession:
         if self._streaming is not None:
             return self._streaming.create_recorder()
         return self._recorder_factory(self.settings)
+
+    def _start_or_cleanup(self, recorder: Recorder) -> None:
+        # create_recorder may have installed a streaming session (with a live
+        # worker thread); if the mic fails to start, close it instead of
+        # leaking one orphaned session per retry.
+        try:
+            recorder.start()
+        except Exception:
+            if self._streaming is not None:
+                self._streaming.on_discard()
+            raise

@@ -87,7 +87,7 @@ class AudioRecorder:
         self.discard()
 
     def _stop_raw_audio(self):
-        if self._stream is None:
+        if self._stream is None and self._raw_audio is None:
             raise RuntimeError("Recorder is not running")
         self._stop_stream()
         raw_audio = self._raw_audio
@@ -152,12 +152,18 @@ class ChunkedAudioRecorder(AudioRecorder):
         self._chunk_buffer.clear()
 
     def stop_capture(self) -> None:
-        """Flush pending chunks and stop the mic stream without writing a WAV."""
-        self._flush_remaining_chunks()
+        """Stop the mic stream, then flush pending chunks without writing a WAV.
+
+        The stream must stop first: the capture callback mutates the chunk
+        buffer concurrently, and any frames it delivers after the flush would
+        be silently discarded (clipping the tail of the last word).
+        """
         self._stop_stream()
+        self._flush_remaining_chunks()
         self._close_raw_audio()
 
     def stop_to_wav(self, output_path: Path) -> Path:
+        self._stop_stream()
         self._flush_remaining_chunks()
         return super().stop_to_wav(output_path)
 

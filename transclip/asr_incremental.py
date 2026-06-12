@@ -9,6 +9,7 @@ were measured unsafe; see plans/2026-06-12-streaming-investigation-report.md).
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 from collections.abc import Callable
@@ -37,6 +38,8 @@ SPEECH_GAP_DB = 15.0
 FRAME_MS = 20
 # Skip pointless passes over tiny or speech-free segments.
 MIN_COMMIT_S = 2.0
+
+logger = logging.getLogger(__name__)
 
 TranscribeWaveform = Callable[[Any], TranscriptionResult]
 
@@ -80,7 +83,6 @@ class IncrementalNarSession:
         self._committed_pass_ms = 0.0
         self._commit_count = 0
         self._closing = False
-        self._worker_error: Exception | None = None
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._worker = threading.Thread(
@@ -163,9 +165,13 @@ class IncrementalNarSession:
                     result = self._transcribe(
                         _pad_to_bucket(pcm16_to_float32(snapshot[:cut]), self._sample_rate)
                     )
-                except Exception as exc:
-                    with self._lock:
-                        self._worker_error = exc
+                except Exception:
+                    # No audio was trimmed, so finish() still transcribes the
+                    # full buffer in one batch pass — only the latency benefit
+                    # is lost. Log it; a silent worker death is undebuggable.
+                    logger.exception(
+                        "Incremental commit pass failed; worker stopped, finish() will run a full batch pass"
+                    )
                     return
                 text = result.text.strip()
                 pass_ms = result.timings_ms.get("asr", 0.0)

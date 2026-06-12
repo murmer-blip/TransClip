@@ -183,7 +183,9 @@ def run_incremental_eval(
             cleanup=case.get("cleanup"),
             source="/eval/incremental",
             keywords=case.get("keywords"),
-            end_to_end_ms=finish_ms,
+            # Backdate so end_to_end spans finish() plus post-processing,
+            # matching what the production streaming path reports.
+            start_time=perf_counter() - finish_ms / 1000,
         )
         reference = case.get("reference")
         keywords = case.get("keywords", [])

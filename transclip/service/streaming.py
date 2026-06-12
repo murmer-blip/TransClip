@@ -22,6 +22,7 @@ class ProcessAsrResult(Protocol):
         source: str,
         keywords: list[str] | None = None,
         end_to_end_ms: float | None = None,
+        start_time: float | None = None,
         wav_path: Path | None = None,
     ) -> TranscribeResponse: ...
 
@@ -43,7 +44,12 @@ class StreamingDictationAdapter:
 
     def create_recorder(self) -> ChunkedAudioRecorder:
         with self._lock:
+            previous = self._session
             self._session = self._session_factory()
+        if previous is not None:
+            # A leftover session means the prior recording never finished
+            # cleanly; close it so its worker thread does not leak.
+            previous.close()
         return ChunkedAudioRecorder(self._settings, on_chunk=self._feed_chunk)
 
     def partial_text(self) -> PartialTranscript:
@@ -66,12 +72,11 @@ class StreamingDictationAdapter:
             raise RuntimeError("Streaming session is not active")
         start = perf_counter()
         asr_result = session.finish()
-        end_to_end_ms = round((perf_counter() - start) * 1000, 3)
         return self._process_asr_result(
             asr_result,
             cleanup=cleanup,
             source=source,
-            end_to_end_ms=end_to_end_ms,
+            start_time=start,
             wav_path=wav_path,
         )
 

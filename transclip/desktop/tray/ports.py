@@ -67,10 +67,17 @@ def _default_write_clipboard() -> WriteClipboard:
 
 
 def _default_fetch_partial() -> FetchPartial:
+    from urllib.error import HTTPError, URLError
+
     from transclip.service.client import InferenceClient
 
     def fetch(settings: Settings) -> tuple[str, str | None]:
-        payload = InferenceClient(settings).record_partial()
+        # Must not raise: an exception escaping the tray's GLib poll callback
+        # destroys the timeout source and permanently stops health updates.
+        try:
+            payload = InferenceClient(settings).record_partial()
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            return "", str(exc)
         text = str(payload.get("partial_text") or "")
         status = str(payload.get("status") or "")
         error = None if status == "recording" else "not recording"

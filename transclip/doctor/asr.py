@@ -162,11 +162,17 @@ def check_asr_runtime(settings: Settings) -> Check:
     except ImportError:
         return Check("asr_runtime", False, "torch is not installed")
     device = resolve_torch_device(settings.asr_device)
+    if device == "mps":
+        return Check(
+            "asr_runtime",
+            True,
+            "Granite NAR on MPS (float32, SDPA attention); no flash-attn required",
+        )
     if device != "cuda":
         return Check(
             "asr_runtime",
             False,
-            "Granite NAR requires CUDA/ROCm with flash-attn; use asr_backend='granite' for CPU",
+            "Granite NAR requires CUDA/ROCm (or MPS on Apple Silicon); use asr_backend='granite' for CPU",
         )
     if getattr(torch.version, "hip", None):
         os.environ.setdefault("FLASH_ATTENTION_TRITON_AMD_ENABLE", "TRUE")

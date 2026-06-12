@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 from time import perf_counter
@@ -57,7 +58,15 @@ class InferenceEngine:
         self.debug_capture = DebugCapture(settings)
         self.asr_backend = asr_backend or build_asr_backend(settings)
         if warm_asr:
-            self.warm_asr()
+            # Warmup failure (e.g. weights not yet downloaded) must not abort
+            # startup: serve degraded and surface the error per-request, as the
+            # lazy-loading path always did.
+            try:
+                self.warm_asr()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "ASR warmup failed; continuing with lazy model load"
+                )
         self._streaming = streaming if streaming is not None else self._build_incremental_adapter()
         self.dictation_session = DictationSession(
             settings,
@@ -147,13 +156,12 @@ class InferenceEngine:
     ) -> TranscribeResponse:
         start = perf_counter()
         asr_result = self.asr_backend.transcribe(wav_path, keywords=keywords)
-        end_to_end_ms = round((perf_counter() - start) * 1000, 3)
         result = self.process_asr_result(
             asr_result,
             cleanup=cleanup,
             source=source,
             keywords=keywords,
-            end_to_end_ms=end_to_end_ms,
+            start_time=start,
             wav_path=wav_path,
         )
         return _with_optional_history(
@@ -179,9 +187,12 @@ class InferenceEngine:
         source: str,
         keywords: list[str] | None = None,
         end_to_end_ms: float | None = None,
+        start_time: float | None = None,
         wav_path: Path | None = None,
     ) -> TranscribeResponse:
-        start = perf_counter()
+        # end_to_end must span ASR plus all post-processing (keyword restore,
+        # routing, cleanup); callers pass start_time taken before the ASR pass.
+        start = start_time if start_time is not None else perf_counter()
         raw_asr = restore_keywords(asr_result.text, keywords or [])
         route = route_voice_mode(
             raw_asr,
@@ -248,9 +259,14 @@ class InferenceEngine:
         settings = self.settings
         backend = self.asr_backend
 
+        def transcribe_chunk(waveform: object) -> TranscriptionResult:
+            # The batch path resamples in TorchAudioPreparer; mirror that here
+            # so non-16kHz capture rates do not feed the model raw.
+            return backend.transcribe_waveform(waveform, sample_rate=settings.sample_rate)
+
         def session_factory() -> IncrementalNarSession:
             return IncrementalNarSession(
-                backend.transcribe_waveform,
+                transcribe_chunk,
                 sample_rate=settings.sample_rate,
                 commit_threshold_s=settings.incremental_commit_threshold_s,
                 backend_name=backend.name,
