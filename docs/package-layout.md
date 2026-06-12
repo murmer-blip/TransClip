@@ -111,7 +111,10 @@ against circular-import regressions (especially `transclip.desktop.hotkey`).
 
 - **Linux:** `install_shortcut` → `linux_gnome` (gsettings), called from `transclip install` and the GTK tray.
 - **Windows:** `start_windows_hotkey` when the Windows tray starts; binding from `hotkey_windows` in settings.
-- **macOS:** No hotkey implementation module. Users configure System Settings or Shortcuts.app manually. The tray exposes **Copy hotkey setup command**; doctor reports readiness via setup messages, not an installer.
+- **macOS:** `install_macos_hotkey` builds a small signed `TransClipHotkey.app`
+  event-tap helper, writes `~/bin/transclip-toggle`, and installs a user
+  LaunchAgent for `Option+Space`. Shortcuts.app remains a fallback via the tray
+  **Copy hotkey setup command** action.
 
 Linux-specific helpers (`get_gnome_shortcut_status`, `shortcut_readiness`) are
 re-exported from `transclip.desktop.hotkey` so `daemon/status` and `doctor`

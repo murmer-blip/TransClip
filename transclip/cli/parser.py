@@ -65,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     gnome_shortcut = sub.add_parser("install-gnome-shortcut")
     gnome_shortcut.add_argument("--binding")
     gnome_shortcut.add_argument("--command", dest="shortcut_command")
+    sub.add_parser("install-macos-hotkey")
+    sub.add_parser("uninstall-macos-hotkey")
 
     eval_parser = sub.add_parser("eval")
     eval_parser.add_argument("manifest", type=Path)

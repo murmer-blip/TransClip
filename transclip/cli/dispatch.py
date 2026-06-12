@@ -12,7 +12,7 @@ from .history_cmd import handle_history
 from .init_config import handle_init_config
 from .models_cmd import handle_models
 from .serve import handle_serve
-from .shortcut_cmd import handle_gnome_shortcut
+from .shortcut_cmd import handle_gnome_shortcut, handle_macos_hotkey
 from .toggle_cmd import handle_toggle_record
 from .transcribe_cmd import handle_cleanup, handle_transcribe
 from .tray_cmd import handle_tray
@@ -40,6 +40,8 @@ def handle_command(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         return handle_config(args, settings)
     if args.command == "install-gnome-shortcut":
         return handle_gnome_shortcut(args, settings)
+    if args.command in {"install-macos-hotkey", "uninstall-macos-hotkey"}:
+        return handle_macos_hotkey(args, settings)
     if args.command == "toggle-record":
         return handle_toggle_record(args, settings)
     if args.command == "transcribe":

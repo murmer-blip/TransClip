@@ -47,10 +47,10 @@ and starts it with `systemctl --user`, and installs the GNOME custom shortcut
 `<Super><Shift>XF86TouchpadOff`; press once to start recording and again to
 stop, transcribe, copy, and paste.
 
-On macOS Apple Silicon, `install` writes a LaunchAgent plist and prints the
-shell command to bind in System Settings or Shortcuts.app. Default suggested
-binding is `Option+Space`. Use the menu bar tray for click-to-record after
-installing the optional UI extra:
+On macOS Apple Silicon, `install` writes the TransClip service LaunchAgent.
+Install the native hotkey helper with `install-macos-hotkey`; it registers
+`Option+Space` without relying on Shortcuts.app. Use the menu bar tray for
+click-to-record after installing the optional UI extra:
 
 ```bash
 uv sync --extra audio --extra mlx --extra macos-ui
@@ -138,21 +138,43 @@ uv run -m transclip.cli serve
 
 ## macOS Apple Silicon Quick Start
 
-Requirements: Apple Silicon, native ARM Python 3.12+, macOS 14+.
+Requirements: Apple Silicon, native ARM Python 3.12+, macOS 14+, and Xcode
+Command Line Tools for `swiftc`:
+
+```bash
+xcode-select --install
+```
 
 ```bash
 uv sync --extra audio --extra mlx --extra macos-ui
 uv run -m transclip.cli init-config
 uv run -m transclip.cli models prefetch --model mlx-community/whisper-large-v3-turbo-asr-fp16
 uv run -m transclip.cli install
+uv run -m transclip.cli install-macos-hotkey
 uv run -m transclip.cli status
 uv run -m transclip.cli doctor
 transclip tray
 ```
 
-Configure a global shortcut using the command printed by `install` or copied
-from the tray menu (`Copy hotkey setup command`). Suggested binding:
-`Option+Space`.
+`install-macos-hotkey` writes:
+
+- `~/bin/transclip-toggle` — robust start/stop wrapper with logging and stale
+  lock cleanup.
+- `~/Applications/TransClipHotkey.app` — a tiny native event-tap helper for
+  `Option+Space`.
+- `~/Library/LaunchAgents/com.paulbrav.transclip-hotkey.plist` — starts the
+  helper at login.
+
+After installing, open **System Settings > Privacy & Security > Accessibility**
+and enable **TransClipHotkey**. On first paste, macOS also prompts:
+**"TransClipHotkey" wants access to control "System Events"**. Click **Allow**.
+
+Usage: put the cursor in a text field, press `Option+Space` once to start
+recording, speak, then press `Option+Space` again to stop, transcribe, copy, and
+paste. Expect several seconds of ASR latency on the stop press.
+
+Shortcuts.app is only a fallback now. If you use it, bind the command printed by
+`install` or copied from the tray menu (`Copy hotkey setup command`).
 
 Supported MLX ASR models on macOS:
 
@@ -166,8 +188,19 @@ models require `uv sync --extra audio --extra models`.
 
 | Action | Permission | Notes |
 | --- | --- | --- |
-| Recording | Microphone | Grant to Terminal, IDE, LaunchAgent Python, or Shortcuts |
-| Paste | Accessibility / Automation | Required for `osascript` paste injection |
+| Recording | Microphone | Grant when macOS prompts for the process that starts recording. |
+| Hotkey | Accessibility | Required for `TransClipHotkey.app` to see and consume `Option+Space`. |
+| Paste | Accessibility / Automation | `TransClipHotkey` controls `System Events`; `osascript` sends `Command+V`. |
+
+The native helper path does not require Accessibility entries for Shortcuts.app,
+AppleScript `applet`, or `TransClipPaste`. Those names are artifacts of manual
+or older setup attempts and can be removed from Accessibility if present.
+
+To remove the native hotkey helper:
+
+```bash
+uv run -m transclip.cli uninstall-macos-hotkey
+```
 
 ## Windows Quick Start
 

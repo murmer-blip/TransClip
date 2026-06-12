@@ -17,8 +17,9 @@ def macos_hotkey_setup_message(
     binding = current.hotkey_macos
     command = build_toggle_command(settings_path, runtime=runtime)
     return (
-        f"Configure a macOS Keyboard Shortcut or Shortcuts.app action for binding {binding!r}:\n"
-        f"{command}"
+        f"Install the native macOS hotkey helper for binding {binding!r}:\n"
+        f"transclip install-macos-hotkey\n\n"
+        f"Fallback: configure a macOS Keyboard Shortcut or Shortcuts.app action:\n{command}"
     )
 
 
