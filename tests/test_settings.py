@@ -1,3 +1,4 @@
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,7 +46,8 @@ class SettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.toml"
             path.write_text('hotkey_linux = "Ctrl+Space"\nwat = true\n', encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, str(path)):
+            # re.escape: Windows paths contain backslashes that are invalid regex escapes.
+            with self.assertRaisesRegex(ValueError, re.escape(str(path))):
                 load_settings(path)
 
     def test_removed_setting_is_stripped_when_settings_are_rewritten(self):
