@@ -64,6 +64,8 @@ class MacOSHotkeyTests(unittest.TestCase):
         self.assertIn('case "transcribing":', source)
         self.assertIn('case "paste_requested":', source)
         self.assertIn('case "finished":', source)
+        self.assertIn('case "ready":', source)
+        self.assertIn("return .labelColor", source)
         self.assertIn("postCommandV", source)
         self.assertIn('writeStateFile("finished", "Pasted")', source)
         self.assertIn("event tap listening for Option+Space", source)

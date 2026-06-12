@@ -329,7 +329,7 @@ class HotkeyStatus: NSObject {
             title = "REC"
             fallback = "Recording"
         case "transcribing":
-            title = "ASR..."
+            title = "TC..."
             fallback = "Transcribing"
         case "pasting":
             title = "PST"
@@ -379,8 +379,10 @@ class HotkeyStatus: NSObject {
             return .systemBlue
         case "pasting", "paste_requested":
             return .systemPurple
-        case "finished", "ready":
+        case "finished":
             return .systemGreen
+        case "ready":
+            return .labelColor
         case "error":
             return .systemRed
         default:
