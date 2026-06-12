@@ -21,6 +21,10 @@ uv run -m transclip.cli install-macos-hotkey
 The helper owns the menu-bar `TC` item and reads stage updates from
 `~/Library/Logs/transclip/hotkey-state.tsv`.
 
+The generated wrapper caps stop/transcription calls at 75 seconds and restarts
+the service on timeout. If a previous wrapper is still stuck after 90 seconds,
+the next hotkey press clears the stale wrapper process tree before trying again.
+
 After the final `install-macos-hotkey` run, refresh Accessibility for
 `TransClipHotkey` before testing. Recompiling and re-signing the helper can make
 macOS treat it as a new app, so another reinstall may require the refresh again.

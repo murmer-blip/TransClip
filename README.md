@@ -162,7 +162,8 @@ transclip tray
 `install-macos-hotkey` writes:
 
 - `~/bin/transclip-toggle` — robust start/stop wrapper with logging and stale
-  lock cleanup.
+  lock cleanup. If stop/transcription hangs, the wrapper restarts the service
+  after 75 seconds; a later press can clear a stale wrapper after 90 seconds.
 - `~/Applications/TransClipHotkey.app` — a tiny native event-tap helper for
   `Option+Space` with a menu-bar status item.
 - `~/Library/LaunchAgents/com.paulbrav.transclip-hotkey.plist` — starts the
@@ -183,14 +184,11 @@ Open **System Settings > Privacy & Security > Accessibility**, delete and re-add
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.paulbrav.transclip-hotkey.plist
 ```
 
-On first paste, macOS also prompts:
-**"TransClipHotkey" wants access to control "System Events"**. Click **Allow**.
-
 Usage: put the cursor in a text field, press `Option+Space` once to start
 recording, speak, then press `Option+Space` again to stop, transcribe, copy, and
 paste. Expect several seconds of ASR latency on the stop press.
 The menu bar shows `TC` when ready, then stage labels for shortcut, recording,
-transcribing, pasting, and finished states.
+transcribing, pasting, finished, recovering, and error states.
 
 Shortcuts.app is only a fallback now. If you use it, bind the command printed by
 `install` or copied from the tray menu (`Copy hotkey setup command`).
@@ -209,11 +207,12 @@ models require `uv sync --extra audio --extra models`.
 | --- | --- | --- |
 | Recording | Microphone | Grant when macOS prompts for the process that starts recording. |
 | Hotkey | Accessibility | Required for `TransClipHotkey.app` to see and consume `Option+Space`. |
-| Paste | Accessibility / Automation | `TransClipHotkey` controls `System Events`; `osascript` sends `Command+V`. |
+| Paste | Accessibility | `TransClipHotkey.app` posts `Command+V` after copying the transcript. |
 
 The native helper path does not require Accessibility entries for Shortcuts.app,
-AppleScript `applet`, or `TransClipPaste`. Those names are artifacts of manual
-or older setup attempts and can be removed from Accessibility if present.
+AppleScript `applet`, `osascript`, or `TransClipPaste`. Those names are artifacts
+of manual or older setup attempts and can be removed from Accessibility if
+present.
 
 To remove the native hotkey helper:
 

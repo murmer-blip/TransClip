@@ -22,8 +22,8 @@ HOTKEY_BUNDLE_ID = "com.paulbrav.TransClipHotkey"
 HOTKEY_LAUNCHD_LABEL = "com.paulbrav.transclip-hotkey"
 HOTKEY_LOG_NAME = "hotkey.log"
 TOGGLE_WRAPPER_NAME = "transclip-toggle"
-DEFAULT_STOP_TIMEOUT_SECONDS = 180
-STALE_LOCK_SECONDS = 240
+DEFAULT_STOP_TIMEOUT_SECONDS = 75
+STALE_LOCK_SECONDS = 90
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +105,31 @@ write_state() {{
   printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') state=${{state}} ${{detail}}" >> "$LOG"
 }}
 
+kill_process_tree() {{
+  pid=$1
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill_process_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}}
+
+clear_stale_lock_owner() {{
+  owner_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
+  case "$owner_pid" in
+    ''|*[!0-9]*)
+      return
+      ;;
+  esac
+  owner_command=$(ps -p "$owner_pid" -o command= 2>/dev/null || true)
+  case "$owner_command" in
+    *transclip-toggle*)
+      write_state recovering "Clearing stale action"
+      printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') killing stale TransClip action pid=${{owner_pid}}" >> "$LOG"
+      kill_process_tree "$owner_pid"
+      ;;
+  esac
+}}
+
 printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') wrapper invoked" >> "$LOG"
 write_state shortcut "Checking service"
 
@@ -120,12 +145,14 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     exit 0
   fi
   printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') clearing stale TransClip action lock (${{lock_age}}s)" >> "$LOG"
+  clear_stale_lock_owner
   rm -rf "$LOCK"
   if ! mkdir "$LOCK" 2>/dev/null; then
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') ignored: could not acquire TransClip action lock" >> "$LOG"
     exit 0
   fi
 fi
+printf '%s\\n' "$$" > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT HUP INT TERM
 
 health=$(curl -sS --max-time 5 "$BASE/health" 2>>"$LOG") || {{
@@ -141,7 +168,7 @@ if [ "$status" = "recording" ]; then
   write_state transcribing "Transcribing"
   response=$(curl -sS --max-time "$MAX_SECONDS" -X POST "$BASE/record/stop" \
     -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
-    write_state error "Stop failed"
+    write_state error "Stop timed out; restarted"
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') stop failed; restarting service" >> "$LOG"
     {restart_command}
     exit 0
@@ -150,13 +177,9 @@ if [ "$status" = "recording" ]; then
   text=$(printf '%s' "$response" | {python} -c \
     'import json,sys; print(json.load(sys.stdin).get("text", ""), end="")' 2>>"$LOG")
   if [ -n "$text" ]; then
-    write_state pasting "Pasting transcript"
+    write_state paste_requested "Paste transcript"
     printf '%s' "$text" | pbcopy
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') copied transcript chars=${{#text}}" >> "$LOG"
-    osascript -e 'tell application "System Events" to keystroke "v" using command down' >> "$LOG" 2>&1
-    paste_status=$?
-    printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') paste exited ${{paste_status}}" >> "$LOG"
-    write_state finished "Pasted"
   else
     write_state finished "No transcript"
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') stop returned no text" >> "$LOG"
@@ -205,6 +228,36 @@ func log(_ message: String) {
     } else {
         try? data.write(to: URL(fileURLWithPath: logPath))
     }
+}
+
+func writeStateFile(_ state: String, _ detail: String) {
+    let formatter = ISO8601DateFormatter()
+    let line = "\\(formatter.string(from: Date()))\\t\\(state)\\t\\(detail)\\n"
+    try? line.write(to: URL(fileURLWithPath: statePath), atomically: true, encoding: .utf8)
+}
+
+func postCommandV() {
+    let source = CGEventSource(stateID: .hidSystemState)
+    let commandKeyCode: CGKeyCode = 55
+    let vKeyCode: CGKeyCode = 9
+
+    let commandDown = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: true)
+    commandDown?.flags = .maskCommand
+    commandDown?.post(tap: .cghidEventTap)
+    usleep(20_000)
+
+    let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
+    vDown?.flags = .maskCommand
+    vDown?.post(tap: .cghidEventTap)
+    usleep(20_000)
+
+    let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
+    vUp?.flags = .maskCommand
+    vUp?.post(tap: .cghidEventTap)
+    usleep(20_000)
+
+    let commandUp = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: false)
+    commandUp?.post(tap: .cghidEventTap)
 }
 
 class HotkeyStatus: NSObject {
@@ -281,6 +334,9 @@ class HotkeyStatus: NSObject {
         case "pasting":
             title = "PST"
             fallback = "Pasting transcript"
+        case "paste_requested":
+            title = "PST"
+            fallback = "Paste transcript"
         case "finished":
             title = "OK"
             fallback = "Finished"
@@ -321,7 +377,7 @@ class HotkeyStatus: NSObject {
             return .systemOrange
         case "transcribing":
             return .systemBlue
-        case "pasting":
+        case "pasting", "paste_requested":
             return .systemPurple
         case "finished", "ready":
             return .systemGreen
@@ -344,7 +400,22 @@ class HotkeyStatus: NSObject {
         let parts = line.components(separatedBy: "\\t")
         let state = parts.count > 1 ? parts[1] : "ready"
         let detail = parts.count > 2 ? parts[2] : state
+        if state == "paste_requested" {
+            performPasteRequest(detail)
+            return
+        }
         setStatus(state, detail)
+    }
+
+    func performPasteRequest(_ detail: String) {
+        setStatus("pasting", detail.isEmpty ? "Pasting transcript" : detail)
+        log("paste requested by wrapper")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            postCommandV()
+            log("posted Command+V")
+            writeStateFile("finished", "Pasted")
+            self.setStatus("finished", "Pasted")
+        }
     }
 
     @objc func openToggleLog(_ sender: Any?) {
