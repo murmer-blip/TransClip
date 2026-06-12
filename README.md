@@ -186,9 +186,21 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.paulbrav.transclip-h
 
 Usage: put the cursor in a text field, press `Option+Space` once to start
 recording, speak, then press `Option+Space` again to stop, transcribe, copy, and
-paste. Expect several seconds of ASR latency on the stop press.
-The menu bar shows `TC` when ready, then stage labels for shortcut, recording,
-transcribing, pasting, finished, recovering, and error states.
+paste. Expect several seconds of transcription latency on the stop press.
+
+Menu-bar transition:
+
+| Phase | Label | Color | Meaning |
+| --- | --- | --- | --- |
+| Idle | `TC` | System label color | Ready and doing nothing. |
+| Shortcut received | `TC...` | Yellow | `Option+Space` was detected and the helper is checking service state. |
+| Recording | `REC` | Orange | The microphone is recording. |
+| Busy | `TC...` | Yellow | A previous action is still running. |
+| Transcribing | `TXT...` | Purple | Speech is being converted to text; this is usually the longest wait. |
+| Paste requested / pasting | `PST...` | Teal | The transcript was copied and the helper is posting `Command+V`. |
+| Finished | `OK` | Green | The transcript was pasted; this resets to `TC` after a short delay. |
+| Recovering | `TC...` | Yellow | A stale wrapper is being cleared before trying again. |
+| Error | `TC!` | Red | The helper needs attention, such as Accessibility or service recovery. |
 
 Shortcuts.app is only a fallback now. If you use it, bind the command printed by
 `install` or copied from the tray menu (`Copy hotkey setup command`).

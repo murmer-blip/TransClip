@@ -325,17 +325,20 @@ class HotkeyStatus: NSObject {
         case "busy":
             title = "TC..."
             fallback = "Already working"
+        case "recovering":
+            title = "TC..."
+            fallback = "Recovering"
         case "listening":
             title = "REC"
             fallback = "Recording"
         case "transcribing":
-            title = "TC..."
+            title = "TXT..."
             fallback = "Transcribing"
         case "pasting":
-            title = "PST"
+            title = "PST..."
             fallback = "Pasting transcript"
         case "paste_requested":
-            title = "PST"
+            title = "PST..."
             fallback = "Paste transcript"
         case "finished":
             title = "OK"
@@ -371,14 +374,14 @@ class HotkeyStatus: NSObject {
 
     private func color(for state: String) -> NSColor {
         switch state {
-        case "shortcut", "busy":
+        case "shortcut", "busy", "recovering":
             return .systemYellow
         case "listening":
             return .systemOrange
         case "transcribing":
-            return .systemBlue
-        case "pasting", "paste_requested":
             return .systemPurple
+        case "pasting", "paste_requested":
+            return .systemTeal
         case "finished":
             return .systemGreen
         case "ready":
