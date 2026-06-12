@@ -18,6 +18,13 @@ uv run -m transclip.cli install-macos-hotkey
 - `~/Applications/TransClipHotkey.app`
 - `~/Library/LaunchAgents/com.paulbrav.transclip-hotkey.plist`
 
+The helper owns the menu-bar `TC` item and reads stage updates from
+`~/Library/Logs/transclip/hotkey-state.tsv`.
+
+After the final `install-macos-hotkey` run, refresh Accessibility for
+`TransClipHotkey` before testing. Recompiling and re-signing the helper can make
+macOS treat it as a new app, so another reinstall may require the refresh again.
+
 ## Edit And Test Loop
 
 Run focused tests for the area you changed:
@@ -41,18 +48,35 @@ For macOS hotkey or wrapper changes, reinstall the helper from the checkout:
 uv run -m transclip.cli install-macos-hotkey
 ```
 
-Then verify the generated wrapper picked up your edit:
+If the helper app was recompiled or re-signed, do the Accessibility refresh now,
+after the final reinstall and before the manual smoke test:
 
 ```bash
-rg -n 'MAX_SECONDS|STALE_LOCK_SECONDS' ~/bin/transclip-toggle
+launchctl bootout gui/$(id -u)/com.paulbrav.transclip-hotkey
+```
+
+In **System Settings > Privacy & Security > Accessibility**, delete and re-add
+`TransClipHotkey`, or toggle it off and back on. Then start the helper again:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.paulbrav.transclip-hotkey.plist
+```
+
+Then verify the generated wrapper picked up your edit and the helper can see the
+hotkey:
+
+```bash
+rg -n 'STATE|MAX_SECONDS|STALE_LOCK_SECONDS' ~/bin/transclip-toggle
+cat ~/Library/Logs/transclip/hotkey-state.tsv
 tail -n 20 ~/Library/Logs/transclip/hotkey.log
 tail -n 20 ~/Library/Logs/transclip/toggle-record.log
 ```
 
 ## Accessibility Reset
 
-Reinstalling `TransClipHotkey.app` recompiles and re-signs the helper. macOS may
-keep a stale Accessibility grant. If notifications repeat or the hotkey log
+This reset is required after first setup and often after any helper rebuild.
+Reinstalling `TransClipHotkey.app` recompiles and re-signs the helper, and macOS
+may keep a stale Accessibility grant. If notifications repeat or the hotkey log
 shows `axTrusted=false`, stop the helper before changing permissions:
 
 ```bash

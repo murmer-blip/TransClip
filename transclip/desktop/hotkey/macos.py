@@ -54,6 +54,10 @@ def macos_hotkey_log_path(runtime: PlatformRuntime | None = None) -> Path:
     return logs_dir(runtime) / HOTKEY_LOG_NAME
 
 
+def macos_hotkey_state_path(runtime: PlatformRuntime | None = None) -> Path:
+    return logs_dir(runtime) / "hotkey-state.tsv"
+
+
 def macos_hotkey_target(runtime: PlatformRuntime | None = None) -> str:
     return f"{macos_launchd_gui_domain(runtime)}/{HOTKEY_LAUNCHD_LABEL}"
 
@@ -74,6 +78,7 @@ def build_macos_toggle_wrapper(
     stale_lock_seconds: int = STALE_LOCK_SECONDS,
 ) -> str:
     log_path = logs_dir(runtime) / "toggle-record.log"
+    state_path = macos_hotkey_state_path(runtime)
     base_url = f"http://{settings.host}:{settings.port}"
     python = shlex.quote(sys.executable)
     cli = f"{python} -m {shlex.quote(IMPORT_PACKAGE + '.cli')}"
@@ -84,19 +89,31 @@ def build_macos_toggle_wrapper(
 set -u
 
 LOG={shlex.quote(str(log_path))}
+STATE={shlex.quote(str(state_path))}
 BASE={shlex.quote(base_url)}
 MAX_SECONDS={int(stop_timeout_seconds)}
 STALE_LOCK_SECONDS={int(stale_lock_seconds)}
 LOCK=/tmp/transclip-toggle.lock
 
 mkdir -p "$(dirname "$LOG")"
+mkdir -p "$(dirname "$STATE")"
+
+write_state() {{
+  state=$1
+  detail=$2
+  printf '%s\\t%s\\t%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$state" "$detail" > "$STATE"
+  printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') state=${{state}} ${{detail}}" >> "$LOG"
+}}
+
 printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') wrapper invoked" >> "$LOG"
+write_state shortcut "Checking service"
 
 if ! mkdir "$LOCK" 2>/dev/null; then
   now=$(date +%s)
   lock_mtime=$(stat -f %m "$LOCK" 2>/dev/null || printf '0')
   lock_age=$((now - lock_mtime))
   if [ "$lock_age" -lt "$STALE_LOCK_SECONDS" ]; then
+    write_state busy "Previous action still running"
     printf '%s\\n' \
       "$(date '+%Y-%m-%dT%H:%M:%S%z') ignored: previous TransClip action still running (${{lock_age}}s)" \
       >> "$LOG"
@@ -112,6 +129,7 @@ fi
 trap 'rm -rf "$LOCK"' EXIT HUP INT TERM
 
 health=$(curl -sS --max-time 5 "$BASE/health" 2>>"$LOG") || {{
+  write_state error "Health check failed"
   printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') health failed; restarting service" >> "$LOG"
   {restart_command}
   exit 0
@@ -120,8 +138,10 @@ status=$(printf '%s' "$health" | {python} -c 'import json,sys; print(json.load(s
 printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') status=${{status}}" >> "$LOG"
 
 if [ "$status" = "recording" ]; then
+  write_state transcribing "Transcribing"
   response=$(curl -sS --max-time "$MAX_SECONDS" -X POST "$BASE/record/stop" \
     -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
+    write_state error "Stop failed"
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') stop failed; restarting service" >> "$LOG"
     {restart_command}
     exit 0
@@ -130,22 +150,27 @@ if [ "$status" = "recording" ]; then
   text=$(printf '%s' "$response" | {python} -c \
     'import json,sys; print(json.load(sys.stdin).get("text", ""), end="")' 2>>"$LOG")
   if [ -n "$text" ]; then
+    write_state pasting "Pasting transcript"
     printf '%s' "$text" | pbcopy
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') copied transcript chars=${{#text}}" >> "$LOG"
     osascript -e 'tell application "System Events" to keystroke "v" using command down' >> "$LOG" 2>&1
     paste_status=$?
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') paste exited ${{paste_status}}" >> "$LOG"
+    write_state finished "Pasted"
   else
+    write_state finished "No transcript"
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') stop returned no text" >> "$LOG"
   fi
 else
   response=$(curl -sS --max-time 10 -X POST "$BASE/record/start" \
     -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
+    write_state error "Start failed"
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') start failed; restarting service" >> "$LOG"
     {restart_command}
     exit 0
   }}
   printf '%s\\n' "$response" >> "$LOG"
+  write_state listening "Recording"
 fi
 
 exit 0
@@ -155,55 +180,230 @@ exit 0
 def build_macos_hotkey_source(
     wrapper_path: Path,
     log_path: Path,
+    state_path: Path,
 ) -> str:
-    return f"""import ApplicationServices
+    source = """import ApplicationServices
+import AppKit
 import Carbon
 import Foundation
 
-let logPath = "{_swift_string(str(log_path))}"
-let wrapperPath = "{_swift_string(str(wrapper_path))}"
+let logPath = "@@LOG_PATH@@"
+let wrapperPath = "@@WRAPPER_PATH@@"
+let statePath = "@@STATE_PATH@@"
 let spaceKeyCode: Int64 = 49
 
-func log(_ message: String) {{
+func log(_ message: String) {
     let formatter = ISO8601DateFormatter()
     let line = "\\(formatter.string(from: Date())) \\(message)\\n"
-    guard let data = line.data(using: .utf8) else {{ return }}
+    guard let data = line.data(using: .utf8) else { return }
 
     if FileManager.default.fileExists(atPath: logPath),
-       let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: logPath)) {{
-        defer {{ try? handle.close() }}
-        try? handle.seekToEnd()
-        try? handle.write(contentsOf: data)
-    }} else {{
+       let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: logPath)) {
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        _ = try? handle.write(contentsOf: data)
+    } else {
         try? data.write(to: URL(fileURLWithPath: logPath))
-    }}
-}}
+    }
+}
 
-func runWrapper() {{
+class HotkeyStatus: NSObject {
+    let statusItem: NSStatusItem
+    let menu = NSMenu()
+    let statusMenuItem: NSMenuItem
+    var lastStateLine = ""
+    var readyResetTimer: Timer?
+
+    override init() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusMenuItem = NSMenuItem(title: "TransClip: Ready", action: nil, keyEquivalent: "")
+        super.init()
+
+        statusMenuItem.isEnabled = false
+        menu.addItem(statusMenuItem)
+        menu.addItem(NSMenuItem.separator())
+
+        let openToggleLog = NSMenuItem(
+            title: "Open toggle log",
+            action: #selector(openToggleLog(_:)),
+            keyEquivalent: ""
+        )
+        openToggleLog.target = self
+        menu.addItem(openToggleLog)
+
+        let openHotkeyLog = NSMenuItem(
+            title: "Open hotkey log",
+            action: #selector(openHotkeyLog(_:)),
+            keyEquivalent: ""
+        )
+        openHotkeyLog.target = self
+        menu.addItem(openHotkeyLog)
+
+        menu.addItem(NSMenuItem.separator())
+        let quit = NSMenuItem(title: "Quit TransClip Hotkey", action: #selector(quit(_:)), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+
+        statusItem.menu = menu
+        setStatus("ready", "Ready")
+    }
+
+    func setStatus(_ state: String, _ detail: String) {
+        if Thread.isMainThread {
+            applyStatus(state, detail)
+        } else {
+            DispatchQueue.main.async {
+                self.applyStatus(state, detail)
+            }
+        }
+    }
+
+    private func applyStatus(_ state: String, _ detail: String) {
+        readyResetTimer?.invalidate()
+        readyResetTimer = nil
+
+        let title: String
+        let fallback: String
+
+        switch state {
+        case "shortcut":
+            title = "TC..."
+            fallback = "Shortcut received"
+        case "busy":
+            title = "TC..."
+            fallback = "Already working"
+        case "listening":
+            title = "REC"
+            fallback = "Recording"
+        case "transcribing":
+            title = "ASR..."
+            fallback = "Transcribing"
+        case "pasting":
+            title = "PST"
+            fallback = "Pasting transcript"
+        case "finished":
+            title = "OK"
+            fallback = "Finished"
+        case "ready":
+            title = "TC"
+            fallback = "Ready"
+        case "error":
+            title = "TC!"
+            fallback = "Error"
+        default:
+            title = "TC"
+            fallback = "Ready"
+        }
+
+        let message = detail.isEmpty ? fallback : detail
+        statusItem.button?.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .foregroundColor: color(for: state),
+                .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            ]
+        )
+        statusItem.button?.toolTip = "TransClip: \\(message)"
+        statusMenuItem.title = "TransClip: \\(message)"
+
+        if state == "finished" {
+            readyResetTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+                self?.setStatus("ready", "Ready")
+            }
+        }
+    }
+
+    private func color(for state: String) -> NSColor {
+        switch state {
+        case "shortcut", "busy":
+            return .systemYellow
+        case "listening":
+            return .systemOrange
+        case "transcribing":
+            return .systemBlue
+        case "pasting":
+            return .systemPurple
+        case "finished", "ready":
+            return .systemGreen
+        case "error":
+            return .systemRed
+        default:
+            return .labelColor
+        }
+    }
+
+    @objc func pollState(_ timer: Timer) {
+        guard let line = try? String(contentsOfFile: statePath, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !line.isEmpty,
+              line != lastStateLine else {
+            return
+        }
+
+        lastStateLine = line
+        let parts = line.components(separatedBy: "\\t")
+        let state = parts.count > 1 ? parts[1] : "ready"
+        let detail = parts.count > 2 ? parts[2] : state
+        setStatus(state, detail)
+    }
+
+    @objc func openToggleLog(_ sender: Any?) {
+        let toggleLogPath = logPath.replacingOccurrences(
+            of: "hotkey.log",
+            with: "toggle-record.log"
+        )
+        NSWorkspace.shared.open(URL(fileURLWithPath: toggleLogPath))
+    }
+
+    @objc func openHotkeyLog(_ sender: Any?) {
+        NSWorkspace.shared.open(URL(fileURLWithPath: logPath))
+    }
+
+    @objc func quit(_ sender: Any?) {
+        NSApplication.shared.terminate(nil)
+    }
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let hotkeyStatus = HotkeyStatus()
+Timer.scheduledTimer(
+    timeInterval: 0.25,
+    target: hotkeyStatus,
+    selector: #selector(HotkeyStatus.pollState(_:)),
+    userInfo: nil,
+    repeats: true
+)
+
+func runWrapper() {
+    hotkeyStatus.setStatus("shortcut", "Shortcut received")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
     process.arguments = ["-lc", wrapperPath]
-    do {{
+    do {
         try process.run()
         log("launched wrapper pid=\\(process.processIdentifier)")
-    }} catch {{
+    } catch {
         log("failed to launch wrapper: \\(error)")
-    }}
-}}
+    }
+}
 
 let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
 let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
 log("event tap starting axTrusted=\\(trusted)")
+if !trusted {
+    hotkeyStatus.setStatus("error", "Accessibility required")
+}
 
-let callback: CGEventTapCallBack = {{ _, type, event, _ in
-    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {{
+let callback: CGEventTapCallBack = { _, type, event, _ in
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         log("event tap disabled type=\\(type.rawValue)")
         return Unmanaged.passUnretained(event)
-    }}
+    }
 
-    guard type == .keyDown else {{
+    guard type == .keyDown else {
         return Unmanaged.passUnretained(event)
-    }}
+    }
 
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
     let flags = event.flags
@@ -211,14 +411,14 @@ let callback: CGEventTapCallBack = {{ _, type, event, _ in
     let hasCommand = flags.contains(.maskCommand)
     let hasControl = flags.contains(.maskControl)
 
-    if keyCode == spaceKeyCode && hasOption && !hasCommand && !hasControl {{
+    if keyCode == spaceKeyCode && hasOption && !hasCommand && !hasControl {
         log("Option+Space detected")
         runWrapper()
         return nil
-    }}
+    }
 
     return Unmanaged.passUnretained(event)
-}}
+}
 
 let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
 guard let eventTap = CGEvent.tapCreate(
@@ -228,17 +428,27 @@ guard let eventTap = CGEvent.tapCreate(
     eventsOfInterest: mask,
     callback: callback,
     userInfo: nil
-) else {{
+) else {
     log("failed to create event tap; Accessibility/Input Monitoring is required")
-    exit(2)
-}}
+    hotkeyStatus.setStatus("error", "Accessibility required")
+    app.run()
+    exit(0)
+}
 
 let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)
 log("event tap listening for Option+Space")
-CFRunLoopRun()
+if trusted {
+    hotkeyStatus.setStatus("ready", "Ready")
+}
+app.run()
 """
+    return (
+        source.replace("@@LOG_PATH@@", _swift_string(str(log_path)))
+        .replace("@@WRAPPER_PATH@@", _swift_string(str(wrapper_path)))
+        .replace("@@STATE_PATH@@", _swift_string(str(state_path)))
+    )
 
 
 def build_macos_hotkey_launch_agent(runtime: PlatformRuntime | None = None) -> bytes:
@@ -292,7 +502,11 @@ def install_macos_hotkey(
     executable.parent.mkdir(parents=True, exist_ok=True)
     paths.source_path.parent.mkdir(parents=True, exist_ok=True)
     paths.source_path.write_text(
-        build_macos_hotkey_source(paths.wrapper_path, macos_hotkey_log_path(platform_runtime)),
+        build_macos_hotkey_source(
+            paths.wrapper_path,
+            macos_hotkey_log_path(platform_runtime),
+            macos_hotkey_state_path(platform_runtime),
+        ),
         encoding="utf-8",
     )
     _macos_hotkey_info_plist_path(platform_runtime).write_bytes(_build_info_plist())

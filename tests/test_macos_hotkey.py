@@ -9,6 +9,7 @@ from transclip.cli import main
 from transclip.desktop.hotkey.macos import (
     HOTKEY_BUNDLE_ID,
     HOTKEY_LAUNCHD_LABEL,
+    build_macos_hotkey_source,
     build_macos_toggle_wrapper,
     install_macos_hotkey,
     macos_hotkey_app_path,
@@ -32,9 +33,36 @@ class MacOSHotkeyTests(unittest.TestCase):
         self.assertIn("/record/stop", script)
         self.assertIn("MAX_SECONDS=180", script)
         self.assertIn("STALE_LOCK_SECONDS=240", script)
+        self.assertIn("STATE=/Users/test/Library/Logs/transclip/hotkey-state.tsv", script)
+        self.assertIn('write_state shortcut "Checking service"', script)
+        self.assertIn('write_state listening "Recording"', script)
+        self.assertIn('write_state transcribing "Transcribing"', script)
+        self.assertIn('write_state pasting "Pasting transcript"', script)
+        self.assertIn('write_state finished "Pasted"', script)
+        self.assertIn('write_state finished "No transcript"', script)
+        self.assertIn('write_state error "Stop failed"', script)
         self.assertIn("osascript -e", script)
         self.assertIn('keystroke "v" using command down', script)
         self.assertIn("stop failed; restarting service", script)
+
+    def test_hotkey_source_builds_status_item_from_state_file(self):
+        source = build_macos_hotkey_source(
+            Path("/Users/test/bin/transclip-toggle"),
+            Path("/Users/test/Library/Logs/transclip/hotkey.log"),
+            Path("/Users/test/Library/Logs/transclip/hotkey-state.tsv"),
+        )
+
+        self.assertIn("import AppKit", source)
+        self.assertIn('let statePath = "/Users/test/Library/Logs/transclip/hotkey-state.tsv"', source)
+        self.assertIn("NSStatusBar.system.statusItem", source)
+        self.assertIn("NSAttributedString", source)
+        self.assertIn("systemOrange", source)
+        self.assertIn("systemBlue", source)
+        self.assertIn("pollState", source)
+        self.assertIn('case "listening":', source)
+        self.assertIn('case "transcribing":', source)
+        self.assertIn('case "finished":', source)
+        self.assertIn("event tap listening for Option+Space", source)
 
     def test_installer_writes_helper_app_launch_agent_and_wrapper(self):
         calls = []
@@ -66,6 +94,7 @@ class MacOSHotkeyTests(unittest.TestCase):
             self.assertTrue(install.source_path.exists())
             self.assertTrue((install.app_path / "Contents" / "Info.plist").exists())
             self.assertTrue(install.launch_agent_path.exists())
+            self.assertIn("hotkey-state.tsv", install.source_path.read_text(encoding="utf-8"))
             self.assertIn(
                 [
                     "/usr/bin/swiftc",

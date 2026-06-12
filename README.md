@@ -164,17 +164,33 @@ transclip tray
 - `~/bin/transclip-toggle` — robust start/stop wrapper with logging and stale
   lock cleanup.
 - `~/Applications/TransClipHotkey.app` — a tiny native event-tap helper for
-  `Option+Space`.
+  `Option+Space` with a menu-bar status item.
 - `~/Library/LaunchAgents/com.paulbrav.transclip-hotkey.plist` — starts the
   helper at login.
 
-After installing, open **System Settings > Privacy & Security > Accessibility**
-and enable **TransClipHotkey**. On first paste, macOS also prompts:
+After installing or reinstalling `TransClipHotkey.app`, refresh Accessibility
+after the final `install-macos-hotkey` run. A later rebuild can invalidate the
+grant again. Stop the helper before changing the grant:
+
+```bash
+launchctl bootout gui/$(id -u)/com.paulbrav.transclip-hotkey
+```
+
+Open **System Settings > Privacy & Security > Accessibility**, delete and re-add
+**TransClipHotkey** or toggle it off and back on, then start the helper again:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.paulbrav.transclip-hotkey.plist
+```
+
+On first paste, macOS also prompts:
 **"TransClipHotkey" wants access to control "System Events"**. Click **Allow**.
 
 Usage: put the cursor in a text field, press `Option+Space` once to start
 recording, speak, then press `Option+Space` again to stop, transcribe, copy, and
 paste. Expect several seconds of ASR latency on the stop press.
+The menu bar shows `TC` when ready, then stage labels for shortcut, recording,
+transcribing, pasting, and finished states.
 
 Shortcuts.app is only a fallback now. If you use it, bind the command printed by
 `install` or copied from the tray menu (`Copy hotkey setup command`).
