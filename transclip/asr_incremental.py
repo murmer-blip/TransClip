@@ -15,7 +15,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from transclip.asr import TranscriptionResult
+from transclip.asr import GRANITE_NAR_BUCKET_SECONDS, TranscriptionResult
 from transclip.asr_streaming import PartialTranscript
 from transclip.audio import pcm16_to_float32
 from transclip.platform.runtime import PlatformRuntime
@@ -23,7 +23,7 @@ from transclip.settings import Settings
 
 # ROCm/Triton recompiles novel tensor shapes at 1.9-8.7 s; padding audio with
 # trailing silence to fixed bucket multiples keeps pass times stable.
-BUCKET_S = 2.0
+BUCKET_S = GRANITE_NAR_BUCKET_SECONDS
 # Never commit into the most recent audio; the model needs trailing context.
 COMMIT_MIN_TAIL_S = 2.0
 # Only cut at silences so a commit boundary cannot split a word.

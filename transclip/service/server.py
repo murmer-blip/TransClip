@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
@@ -12,6 +13,32 @@ from .engine import InferenceEngine
 from .routes import dispatch_get, dispatch_post
 
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+class TransclipHTTPServer(ThreadingHTTPServer):
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        request_handler: type[BaseHTTPRequestHandler],
+        bind_and_activate: bool = True,
+    ):
+        super().__init__(server_address, request_handler, bind_and_activate)
+        self._shutdown_events: list[threading.Event] = []
+
+    def add_shutdown_event(self, event: threading.Event) -> None:
+        self._shutdown_events.append(event)
+
+    def shutdown(self) -> None:
+        self._signal_shutdown_events()
+        super().shutdown()
+
+    def server_close(self) -> None:
+        self._signal_shutdown_events()
+        super().server_close()
+
+    def _signal_shutdown_events(self) -> None:
+        for event in self._shutdown_events:
+            event.set()
 
 
 def _hostname(value: str, *, has_scheme: bool) -> str | None:
@@ -132,7 +159,16 @@ def create_server(
             self.send_header("access-control-allow-methods", "GET, POST, OPTIONS")
             self.send_header("access-control-allow-headers", "content-type")
 
-    return ThreadingHTTPServer((settings.host, settings.port), Handler)
+    stop_event = threading.Event()
+    server = TransclipHTTPServer((settings.host, settings.port), Handler)
+    server.add_shutdown_event(stop_event)
+    threading.Thread(
+        target=active_engine.warm_bucket_shapes,
+        args=(stop_event,),
+        name="transclip-bucket-warm",
+        daemon=True,
+    ).start()
+    return server
 
 
 def run_server(settings: Settings | None = None) -> None:

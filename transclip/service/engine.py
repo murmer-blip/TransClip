@@ -4,8 +4,14 @@ import logging
 import tempfile
 from pathlib import Path
 from time import perf_counter
+from typing import Any, Protocol
 
-from transclip.asr import ASRBackend, TranscriptionResult, build_asr_backend
+from transclip.asr import (
+    GRANITE_NAR_BUCKET_SECONDS,
+    ASRBackend,
+    TranscriptionResult,
+    build_asr_backend,
+)
 from transclip.asr_incremental import IncrementalNarSession, incremental_transcription_enabled
 from transclip.audio import AudioRecorder, write_wav
 from transclip.best_effort import best_effort
@@ -34,6 +40,16 @@ from .types import (
     ServiceHealthResponse,
     TranscribeResponse,
 )
+
+
+class StopSignal(Protocol):
+    def wait(self, timeout: float) -> bool: ...
+
+    def is_set(self) -> bool: ...
+
+
+class WaveformTranscriber(Protocol):
+    def __call__(self, waveform: Any, sample_rate: int = 16000) -> TranscriptionResult: ...
 
 
 class InferenceEngine:
@@ -179,6 +195,33 @@ class InferenceEngine:
             wav_path = write_wav(Path(tmp) / "warmup.wav", pcm16_silence, sample_rate)
             self.asr_backend.transcribe(wav_path, keywords=[])
 
+    def warm_bucket_shapes(self, stop_event: StopSignal) -> None:
+        """Compile remaining NAR bucket shapes in the background after readiness."""
+        transcribe_waveform = _waveform_transcriber(self.asr_backend)
+        max_seconds = max(0, int(self.settings.warm_bucket_shapes_s))
+        if transcribe_waveform is None or max_seconds <= 0:
+            return
+
+        import numpy as np
+
+        logger = logging.getLogger(__name__)
+        sample_rate = max(1, self.settings.sample_rate)
+        for seconds in _bucket_warm_seconds(max_seconds):
+            while self.dictation_session.status() == "recording":
+                if stop_event.wait(1.0):
+                    return
+            if stop_event.is_set():
+                return
+            try:
+                transcribe_waveform(
+                    np.zeros(seconds * sample_rate, dtype=np.float32),
+                    sample_rate=sample_rate,
+                )
+                logger.info("Pre-warmed ASR bucket shape at %ss", seconds)
+            except Exception:
+                logger.exception("Bucket pre-warm failed at %ss; aborting pre-warm", seconds)
+                return
+
     def process_asr_result(
         self,
         asr_result: TranscriptionResult,
@@ -253,7 +296,7 @@ class InferenceEngine:
     def _build_incremental_adapter(self) -> StreamingDictationAdapter | None:
         if not incremental_transcription_enabled(self.settings):
             return None
-        transcribe_waveform = getattr(self.asr_backend, "transcribe_waveform", None)
+        transcribe_waveform = _waveform_transcriber(self.asr_backend)
         if transcribe_waveform is None:
             return None
         settings = self.settings
@@ -274,6 +317,18 @@ class InferenceEngine:
             )
 
         return StreamingDictationAdapter(settings, session_factory, self.process_asr_result)
+
+
+def _waveform_transcriber(backend: ASRBackend) -> WaveformTranscriber | None:
+    transcribe_waveform = getattr(backend, "transcribe_waveform", None)
+    if not callable(transcribe_waveform):
+        return None
+    return transcribe_waveform
+
+
+def _bucket_warm_seconds(max_seconds: int) -> range:
+    bucket_step_s = max(1, int(GRANITE_NAR_BUCKET_SECONDS))
+    return range(bucket_step_s * 2, max_seconds + 1, bucket_step_s)
 
 
 def _with_optional_history(

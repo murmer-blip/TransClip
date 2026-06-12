@@ -1,6 +1,7 @@
 import base64
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +12,35 @@ from transclip.service import InferenceEngine
 from transclip.settings import Settings
 
 from tests.service_helpers import FakeASR, FakeRecorder, FakeTextBackend, http_json, serve_test_engine, stop_server
+
+
+class FakeWaveformASR(FakeASR):
+    def __init__(self):
+        super().__init__()
+        self.waveform_lengths = []
+        self.waveform_sample_rates = []
+
+    def transcribe_waveform(self, waveform, sample_rate=16000):
+        self.waveform_lengths.append(len(waveform))
+        self.waveform_sample_rates.append(sample_rate)
+        return self.transcribe(Path("waveform.wav"), keywords=[])
+
+
+class FakeStopEvent:
+    def __init__(self):
+        self.wait_calls = 0
+        self._set = False
+
+    def wait(self, timeout):
+        del timeout
+        self.wait_calls += 1
+        return self._set
+
+    def is_set(self):
+        return self._set
+
+    def set(self):
+        self._set = True
 
 
 class ServiceTests(unittest.TestCase):
@@ -66,6 +96,61 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(len(warm_asr.calls), 1)
         self.assertEqual(warm_asr.keywords, [])
+
+    def test_engine_warms_remaining_bucket_shapes(self):
+        asr = FakeWaveformASR()
+        engine = InferenceEngine(
+            Settings(sample_rate=16000, warm_bucket_shapes_s=8),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+
+        engine.warm_bucket_shapes(threading.Event())
+
+        self.assertEqual(asr.waveform_lengths, [64_000, 96_000, 128_000])
+        self.assertEqual(asr.waveform_sample_rates, [16_000, 16_000, 16_000])
+
+    def test_bucket_warmup_waits_while_recording(self):
+        asr = FakeWaveformASR()
+        engine = InferenceEngine(
+            Settings(sample_rate=16000, warm_bucket_shapes_s=4),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+        statuses = ["recording", "ready"]
+        engine.dictation_session.status = lambda: statuses.pop(0) if statuses else "ready"
+        stop_event = FakeStopEvent()
+
+        engine.warm_bucket_shapes(stop_event)
+
+        self.assertEqual(stop_event.wait_calls, 1)
+        self.assertEqual(asr.waveform_lengths, [64_000])
+
+    def test_bucket_warmup_exits_when_stopped(self):
+        asr = FakeWaveformASR()
+        engine = InferenceEngine(
+            Settings(sample_rate=16000, warm_bucket_shapes_s=4),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+        stop_event = threading.Event()
+        stop_event.set()
+
+        engine.warm_bucket_shapes(stop_event)
+
+        self.assertEqual(asr.waveform_lengths, [])
+
+    def test_bucket_warmup_skips_file_only_asr_backend(self):
+        asr = FakeASR()
+        engine = InferenceEngine(
+            Settings(sample_rate=16000, warm_bucket_shapes_s=4),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+
+        engine.warm_bucket_shapes(threading.Event())
+
+        self.assertEqual(asr.calls, [])
 
     def test_cleanup_text_uses_model_cleanup_when_always_on(self):
         text_backend = FakeTextBackend(["Model cleaned via /cleanup"])

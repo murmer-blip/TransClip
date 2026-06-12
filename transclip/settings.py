@@ -43,6 +43,7 @@ class Settings:
     asr_device: str = "auto"
     incremental_transcription: bool = False
     incremental_commit_threshold_s: float = 10.0
+    warm_bucket_shapes_s: int = 16
     streaming_chunk_ms: int = 500
     sample_rate: int = 16000
     host: str = "127.0.0.1"
@@ -94,21 +95,10 @@ def load_settings(path: Path | None = None, runtime: PlatformRuntime | None = No
     legacy_max_recording_seconds = data.pop("max_recording_seconds", None)
     if legacy_max_recording_seconds is not None and "max_recording_ms" not in data:
         data["max_recording_ms"] = int(float(legacy_max_recording_seconds) * 1000)
-    legacy_chunk_ms = data.pop("qwen_streaming_chunk_ms", None)
-    if legacy_chunk_ms is not None and "streaming_chunk_ms" not in data:
-        data["streaming_chunk_ms"] = int(legacy_chunk_ms)
-    for legacy_key in (
-        "qwen_streaming_chunk_size_sec",
-        "qwen_streaming_unfixed_chunk_num",
-        "qwen_streaming_unfixed_token_num",
-        "qwen_streaming_gpu_memory_utilization",
-        "qwen_streaming_max_new_tokens",
-    ):
-        data.pop(legacy_key, None)
     allowed = {field.name for field in fields(Settings)}
     unknown = sorted(set(data) - allowed)
     if unknown:
-        raise ValueError(f"Unknown settings field(s): {', '.join(unknown)}")
+        raise ValueError(f"Unknown settings field(s) in {path}: {', '.join(unknown)}")
     settings = Settings(**data)
     return settings
 
@@ -146,6 +136,7 @@ def settings_to_toml(settings: Settings) -> str:
             "asr_device",
             "incremental_transcription",
             "incremental_commit_threshold_s",
+            "warm_bucket_shapes_s",
             "streaming_chunk_ms",
             "sample_rate",
             "host",
