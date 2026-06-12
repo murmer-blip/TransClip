@@ -120,6 +120,21 @@ class FakeSoundDevice:
         return devices[int(device)]
 
 
+class DefaultInputSoundDevice:
+    InputStream = FakeInputStream
+    default = SimpleNamespace(device=[None, 2])
+    query_calls = 0
+
+    @classmethod
+    def query_devices(cls, device=None, kind=None):
+        del device, kind
+        cls.query_calls += 1
+        return [
+            {"name": "MacBook Air Microphone", "max_input_channels": 1},
+            {"name": "USB Microphone", "max_input_channels": 1},
+        ]
+
+
 class AudioDebugTests(unittest.TestCase):
     def test_audio_recorder_streams_callback_audio_to_wav_without_copying_chunks(self):
         FakeInputStream.instances = []
@@ -144,6 +159,24 @@ class AudioDebugTests(unittest.TestCase):
         self.assertTrue(stream.stopped)
         self.assertTrue(stream.closed)
         self.assertTrue(raw_audio.closed)
+
+    def test_audio_recorder_opens_default_input_before_enumerating_fallback_devices(self):
+        FakeInputStream.instances = []
+        DefaultInputSoundDevice.query_calls = 0
+        raw_audio = FakeRawAudio()
+        with (
+            patch.dict("sys.modules", {"sounddevice": DefaultInputSoundDevice}),
+            patch("transclip.audio.tempfile.TemporaryFile", return_value=raw_audio),
+        ):
+            recorder = AudioRecorder(Settings())
+            recorder.start()
+            stream = FakeInputStream.instances[-1]
+            self.assertNotIn("device", stream.kwargs)
+            self.assertEqual(DefaultInputSoundDevice.query_calls, 0)
+            recorder.discard()
+
+        self.assertTrue(stream.stopped)
+        self.assertTrue(stream.closed)
 
     def test_audio_recorder_prefers_configured_input_device_when_default_fails(self):
         FailingDefaultInputStream.instances = []

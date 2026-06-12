@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import time
 import wave
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -251,23 +251,32 @@ def sounddevice_summary() -> str:
         return f"sounddevice query failed: {exc}"
 
 
-def _candidate_input_devices(sd, preferred: str) -> list[object]:
-    candidates: list[object] = []
+def _candidate_input_devices(sd, preferred: str) -> Iterator[object]:
+    seen: set[object] = set()
+    emitted = False
+
+    def should_emit(candidate: object) -> bool:
+        nonlocal emitted
+        if candidate in seen:
+            return False
+        seen.add(candidate)
+        emitted = True
+        return True
+
     preferred = preferred.strip()
     if preferred:
-        candidates.extend(_matching_input_devices(sd, preferred))
+        for candidate in _matching_input_devices(sd, preferred):
+            if should_emit(candidate):
+                yield candidate
     default_owner = getattr(sd, "default", None)
     default = _default_input_device(getattr(default_owner, "device", None))
-    candidates.append(default)
-    candidates.extend(_all_input_devices(sd))
-    seen: set[object] = set()
-    unique: list[object] = []
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        unique.append(candidate)
-    return unique or [None]
+    if should_emit(default):
+        yield default
+    for candidate in _all_input_devices(sd):
+        if should_emit(candidate):
+            yield candidate
+    if not emitted:
+        yield None
 
 
 def _matching_input_devices(sd, preferred: str) -> list[object]:
