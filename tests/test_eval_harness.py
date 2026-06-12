@@ -1,5 +1,7 @@
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -132,7 +134,12 @@ class EvalHarnessTests(unittest.TestCase):
                 Settings(),
                 asr_backend=FakeASR("hello"),
             )
-            with patch("soundfile.read", return_value=(np.zeros((16000, 1)), 16000)):
+            # Stub the module rather than patching soundfile.read so the test
+            # also runs on CI hosts without the audio extras installed.
+            fake_soundfile = types.SimpleNamespace(
+                read=lambda *args, **kwargs: (np.zeros((16000, 1), dtype=np.float32), 16000)
+            )
+            with patch.dict(sys.modules, {"soundfile": fake_soundfile}):
                 result = run_incremental_eval(manifest, engine, factory, chunk_ms=500)
         self.assertEqual(result["summary"]["incremental"], True)
         self.assertIsNotNone(result["summary"]["mean_time_to_first_partial_ms"])
