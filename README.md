@@ -263,7 +263,13 @@ changes because committed audio is physically removed from the buffer.
 incremental_transcription = true        # opt-in; defaults to false
 incremental_commit_threshold_s = 10.0   # uncommitted audio that triggers a background pass
 streaming_chunk_ms = 500                # mic chunk size fed to the session
+warm_bucket_shapes_s = 16               # pre-warm NAR bucket shapes up to this length after startup (0 disables)
 ```
+
+After the service reports ready, the remaining NAR tensor-bucket shapes (4 s
+through `warm_bucket_shapes_s`, in 2 s steps) are compiled in a background
+thread that yields whenever a recording is active, so the first long utterance
+after a restart does not pay a multi-second ROCm shape compile.
 
 | Platform | Batch default | Incremental | Notes |
 |----------|---------------|-------------|-------|

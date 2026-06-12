@@ -1,4 +1,5 @@
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -133,6 +134,85 @@ class ASRTests(unittest.TestCase):
         _configure_rocm_nar_attention_env(os_module, torch, "cpu")
 
         self.assertEqual(environ, {})
+
+    def test_granite_ar_scales_max_new_tokens_with_audio_length(self):
+        short = self._run_granite_ar_transcribe(audio_seconds=5)
+        long = self._run_granite_ar_transcribe(audio_seconds=300)
+
+        self.assertEqual(short["max_new_tokens"], 200)
+        self.assertEqual(long["max_new_tokens"], 3064)
+
+    def test_granite_ar_warns_when_generation_hits_token_cap(self):
+        with self.assertLogs("transclip.asr", level="WARNING") as logs:
+            result = self._run_granite_ar_transcribe(audio_seconds=5, output_tokens=200)
+
+        self.assertEqual(result["max_new_tokens"], 200)
+        self.assertIn("hit max_new_tokens=200", "\n".join(logs.output))
+
+    def _run_granite_ar_transcribe(self, *, audio_seconds, output_tokens=10):
+        class FakeModelInputs(dict):
+            def to(self, device):
+                del device
+                return self
+
+        class FakeTokens:
+            def __init__(self, length):
+                self.shape = (1, length)
+
+            def unsqueeze(self, dim):
+                del dim
+                return self
+
+        class FakeModelOutput:
+            def __init__(self, length):
+                self.length = length
+
+            def __getitem__(self, item):
+                row, token_slice = item
+                del row, token_slice
+                return FakeTokens(self.length)
+
+        class FakeModel:
+            def __init__(self):
+                self.max_new_tokens = None
+
+            def generate(self, **kwargs):
+                self.max_new_tokens = kwargs["max_new_tokens"]
+                return FakeModelOutput(output_tokens)
+
+        class FakeTokenizer:
+            def apply_chat_template(self, *args, **kwargs):
+                del args, kwargs
+                return "templated"
+
+            def batch_decode(self, *args, **kwargs):
+                del args, kwargs
+                return ["decoded transcript"]
+
+        class FakeProcessor:
+            def __call__(self, *args, **kwargs):
+                del args, kwargs
+                return FakeModelInputs({"input_ids": SimpleNamespace(shape=(1, 5))})
+
+        model = FakeModel()
+        backend = GraniteSpeechTransformersBackend("ibm-granite/granite-speech-4.1-2b")
+        backend._device = lambda: "cpu"
+        backend._loaded = (FakeProcessor(), FakeTokenizer(), model)
+        backend.audio_preparer = SimpleNamespace(
+            prepare=lambda _path: SimpleNamespace(
+                wav=SimpleNamespace(shape=(1, int(audio_seconds * 16_000))),
+                sample_rate=16_000,
+            )
+        )
+        fake_torch = SimpleNamespace(inference_mode=lambda: nullcontext())
+
+        with patch.dict("sys.modules", {"torch": fake_torch}):
+            transcript = backend.transcribe(Path("audio.wav"))
+
+        return {
+            "max_new_tokens": model.max_new_tokens,
+            "transcript": transcript.text,
+        }
 
     def test_granite_nar_pads_waveform_to_stable_bucket(self):
         waveform = np.ones(int(1.2 * 16000), dtype=np.float32)

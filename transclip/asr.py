@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import platform as py_platform
 import tempfile
@@ -19,6 +20,11 @@ from .models import (
 )
 from .settings import Settings
 from .timing import timed_ms
+
+logger = logging.getLogger(__name__)
+
+AR_TOKENS_PER_AUDIO_SECOND = 10
+AR_MIN_NEW_TOKENS = 200
 
 
 @dataclass(slots=True)
@@ -164,6 +170,11 @@ class GraniteSpeechTransformersBackend:
 
             processor, tokenizer, model = self._load(device)
             audio = self.audio_preparer.prepare(wav_path)
+            audio_seconds = audio.wav.shape[-1] / audio.sample_rate
+            max_new_tokens = max(
+                AR_MIN_NEW_TOKENS,
+                int(audio_seconds * AR_TOKENS_PER_AUDIO_SECOND) + 64,
+            )
             prompt = granite_user_prompt(keywords)
             chat = [{"role": "user", "content": f"<|audio|>{prompt}"}]
             templated = tokenizer.apply_chat_template(
@@ -180,12 +191,18 @@ class GraniteSpeechTransformersBackend:
             with torch.inference_mode():
                 model_outputs = model.generate(
                     **model_inputs,
-                    max_new_tokens=200,
+                    max_new_tokens=max_new_tokens,
                     do_sample=False,
                     num_beams=1,
                 )
             num_input_tokens = model_inputs["input_ids"].shape[-1]
             new_tokens = model_outputs[0, num_input_tokens:].unsqueeze(0)
+            if new_tokens.shape[-1] >= max_new_tokens:
+                logger.warning(
+                    "AR generation hit max_new_tokens=%d for %.0fs of audio; transcript may be truncated",
+                    max_new_tokens,
+                    audio_seconds,
+                )
             decoded = tokenizer.batch_decode(
                 new_tokens,
                 add_special_tokens=False,
@@ -195,6 +212,7 @@ class GraniteSpeechTransformersBackend:
 
 
 GRANITE_NAR_SAMPLE_RATE = 16000
+GRANITE_NAR_BUCKET_SECONDS = 2.0
 
 
 class GraniteSpeechNarTransformersBackend:
@@ -381,7 +399,11 @@ def build_asr_backend(
     return backend
 
 
-def _pad_nar_waveform_to_bucket(waveform: Any, sample_rate: int, bucket_seconds: float = 2.0) -> Any:
+def _pad_nar_waveform_to_bucket(
+    waveform: Any,
+    sample_rate: int,
+    bucket_seconds: float = GRANITE_NAR_BUCKET_SECONDS,
+) -> Any:
     """Pad NAR inputs to stable tensor buckets to avoid first-use shape compiles."""
     bucket_samples = max(1, int(sample_rate * bucket_seconds))
     length = int(waveform.shape[-1] if hasattr(waveform, "shape") else len(waveform))
