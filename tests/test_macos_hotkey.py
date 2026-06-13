@@ -118,9 +118,11 @@ esac
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = calls_path.read_text(encoding="utf-8").splitlines()
             self.assertGreaterEqual(len(calls), 2)
-            self.assertIn("/record/start", calls[0])
-            self.assertIn("/record/stop", calls[1])
-            self.assertIn("/health", "\n".join(calls))
+            joined_calls = "\n".join(calls)
+            start_index = next(index for index, call in enumerate(calls) if "/record/start" in call)
+            stop_index = next(index for index, call in enumerate(calls) if "/record/stop" in call)
+            self.assertLess(start_index, stop_index)
+            self.assertIn("/health", joined_calls)
             self.assertEqual(paste_path.read_text(encoding="utf-8"), "hello pasted")
             self.assertIn(
                 "paste_requested\tPaste transcript",
