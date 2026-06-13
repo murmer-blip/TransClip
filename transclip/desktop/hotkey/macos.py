@@ -7,7 +7,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from transclip.daemon.common import CommandResult, logs_dir, repo_root
 from transclip.paths import service_settings_path
@@ -84,12 +84,12 @@ def build_macos_toggle_wrapper(
     cli = f"{python} -m {shlex.quote(IMPORT_PACKAGE + '.cli')}"
     if settings_path:
         cli += f" --settings {shlex.quote(service_settings_path(settings_path))}"
-    restart_command = f'cd {shlex.quote(str(repo_root()))} && {cli} restart >> "$LOG" 2>&1'
+    restart_command = f'cd {shlex.quote(_macos_path_text(repo_root()))} && {cli} restart >> "$LOG" 2>&1'
     return f"""#!/bin/sh
 set -u
 
-LOG={shlex.quote(str(log_path))}
-STATE={shlex.quote(str(state_path))}
+LOG={shlex.quote(_macos_path_text(log_path))}
+STATE={shlex.quote(_macos_path_text(state_path))}
 BASE={shlex.quote(base_url)}
 MAX_SECONDS={int(stop_timeout_seconds)}
 STALE_LOCK_SECONDS={int(stale_lock_seconds)}
@@ -536,9 +536,9 @@ if trusted {
 app.run()
 """
     return (
-        source.replace("@@LOG_PATH@@", _swift_string(str(log_path)))
-        .replace("@@WRAPPER_PATH@@", _swift_string(str(wrapper_path)))
-        .replace("@@STATE_PATH@@", _swift_string(str(state_path)))
+        source.replace("@@LOG_PATH@@", _swift_string(_macos_path_text(log_path)))
+        .replace("@@WRAPPER_PATH@@", _swift_string(_macos_path_text(wrapper_path)))
+        .replace("@@STATE_PATH@@", _swift_string(_macos_path_text(state_path)))
     )
 
 
@@ -696,3 +696,7 @@ def _macos_hotkey_info_plist_path(runtime: PlatformRuntime | None = None) -> Pat
 
 def _swift_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _macos_path_text(path: PurePath) -> str:
+    return path.as_posix()

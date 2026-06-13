@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 from transclip.cli import main
@@ -27,6 +27,7 @@ from tests.service_helpers import FakeRuntime, normalize_path_text
 
 
 class MacOSHotkeyTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "generated macOS shell wrapper requires a POSIX shell")
     def test_toggle_wrapper_start_reaches_recording_without_health_probe(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -70,6 +71,7 @@ esac
             self.assertNotIn("/health", calls[0])
             self.assertIn("listening\tRecording", macos_hotkey_state_path(runtime).read_text(encoding="utf-8"))
 
+    @unittest.skipIf(os.name == "nt", "generated macOS shell wrapper requires a POSIX shell")
     def test_toggle_wrapper_stop_falls_back_when_start_reports_already_recording(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -148,6 +150,18 @@ esac
         self.assertNotIn("$BASE/health", script)
         self.assertNotIn("osascript -e", script)
         self.assertIn("stop failed; restarting service", script)
+
+    def test_generated_macos_artifacts_use_forward_slash_paths(self):
+        runtime = FakeRuntime(system="Darwin", home=PureWindowsPath("/Users/test"))
+        script = build_macos_toggle_wrapper(Settings(host="127.0.0.1", port=8765), runtime=runtime)
+        source = build_macos_hotkey_source(
+            PureWindowsPath("/Users/test/bin/transclip-toggle"),
+            PureWindowsPath("/Users/test/Library/Logs/transclip/hotkey.log"),
+            PureWindowsPath("/Users/test/Library/Logs/transclip/hotkey-state.tsv"),
+        )
+
+        self.assertIn("STATE=/Users/test/Library/Logs/transclip/hotkey-state.tsv", script)
+        self.assertIn('let statePath = "/Users/test/Library/Logs/transclip/hotkey-state.tsv"', source)
 
     def test_hotkey_source_builds_status_item_from_state_file(self):
         source = build_macos_hotkey_source(
