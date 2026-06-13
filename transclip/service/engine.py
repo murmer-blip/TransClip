@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import tempfile
 from pathlib import Path
 from time import perf_counter
@@ -190,9 +191,9 @@ class InferenceEngine:
     def warm_asr(self) -> None:
         """Load and compile the ASR backend before the service reports ready."""
         sample_rate = max(1, self.settings.sample_rate)
-        pcm16_silence = b"\x00\x00" * (sample_rate * 2)
+        pcm16_warmup = _warmup_pcm16_chirp(sample_rate)
         with tempfile.TemporaryDirectory(prefix="transclip-warmup-") as tmp:
-            wav_path = write_wav(Path(tmp) / "warmup.wav", pcm16_silence, sample_rate)
+            wav_path = write_wav(Path(tmp) / "warmup.wav", pcm16_warmup, sample_rate)
             self.asr_backend.transcribe(wav_path, keywords=[])
 
     def warm_bucket_shapes(self, stop_event: StopSignal) -> None:
@@ -329,6 +330,18 @@ def _waveform_transcriber(backend: ASRBackend) -> WaveformTranscriber | None:
 def _bucket_warm_seconds(max_seconds: int) -> range:
     bucket_step_s = max(1, int(GRANITE_NAR_BUCKET_SECONDS))
     return range(bucket_step_s * 2, max_seconds + 1, bucket_step_s)
+
+
+def _warmup_pcm16_chirp(sample_rate: int, seconds: float = 0.25) -> bytes:
+    frame_count = max(1, int(sample_rate * seconds))
+    peak = 0.08 * 32767.0
+    frames = bytearray()
+    for index in range(frame_count):
+        progress = index / max(1, frame_count - 1)
+        frequency = 180.0 + 420.0 * progress
+        sample = int(peak * math.sin(2.0 * math.pi * frequency * index / sample_rate))
+        frames.extend(sample.to_bytes(2, "little", signed=True))
+    return bytes(frames)
 
 
 def _with_optional_history(

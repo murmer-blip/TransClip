@@ -3,6 +3,7 @@ import json
 import tempfile
 import threading
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -96,6 +97,25 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(len(warm_asr.calls), 1)
         self.assertEqual(warm_asr.keywords, [])
+
+    def test_engine_warm_asr_uses_non_silent_audio(self):
+        class InspectingASR(FakeASR):
+            def transcribe(self, wav_path: Path, keywords: list[str] | None = None):
+                with wave.open(str(wav_path), "rb") as wav:
+                    self.sample_rate = wav.getframerate()
+                    self.frames = wav.readframes(wav.getnframes())
+                return super().transcribe(wav_path, keywords=keywords)
+
+        asr = InspectingASR()
+        InferenceEngine(
+            Settings(sample_rate=8000),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+            warm_asr=True,
+        )
+
+        self.assertEqual(asr.sample_rate, 8000)
+        self.assertTrue(any(asr.frames))
 
     def test_engine_warms_remaining_bucket_shapes(self):
         asr = FakeWaveformASR()
