@@ -7,7 +7,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from transclip.daemon.common import CommandResult, logs_dir, repo_root
 from transclip.paths import service_settings_path
@@ -84,12 +84,12 @@ def build_macos_toggle_wrapper(
     cli = f"{python} -m {shlex.quote(IMPORT_PACKAGE + '.cli')}"
     if settings_path:
         cli += f" --settings {shlex.quote(service_settings_path(settings_path))}"
-    restart_command = f'cd {shlex.quote(str(repo_root()))} && {cli} restart >> "$LOG" 2>&1'
+    restart_command = f'cd {shlex.quote(_macos_path_text(repo_root()))} && {cli} restart >> "$LOG" 2>&1'
     return f"""#!/bin/sh
 set -u
 
-LOG={shlex.quote(str(log_path))}
-STATE={shlex.quote(str(state_path))}
+LOG={shlex.quote(_macos_path_text(log_path))}
+STATE={shlex.quote(_macos_path_text(state_path))}
 BASE={shlex.quote(base_url)}
 MAX_SECONDS={int(stop_timeout_seconds)}
 STALE_LOCK_SECONDS={int(stale_lock_seconds)}
@@ -131,7 +131,7 @@ clear_stale_lock_owner() {{
 }}
 
 printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') wrapper invoked" >> "$LOG"
-write_state shortcut "Checking service"
+write_state shortcut "Starting recording"
 
 if ! mkdir "$LOCK" 2>/dev/null; then
   now=$(date +%s)
@@ -155,16 +155,25 @@ fi
 printf '%s\\n' "$$" > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT HUP INT TERM
 
-health=$(curl -sS --max-time 5 "$BASE/health" 2>>"$LOG") || {{
-  write_state error "Health check failed"
-  printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') health failed; restarting service" >> "$LOG"
+response=$(curl -sS --max-time 10 -X POST "$BASE/record/start" \
+  -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
+  write_state error "Start failed"
+  printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') start failed; restarting service" >> "$LOG"
   {restart_command}
   exit 0
 }}
-status=$(printf '%s' "$health" | {python} -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>>"$LOG")
-printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') status=${{status}}" >> "$LOG"
+printf '%s\\n' "$response" >> "$LOG"
+case "$response" in
+  *'"already_recording": true'*|*'"already_recording":true'*)
+    already_recording=1
+    ;;
+  *)
+    already_recording=0
+    ;;
+esac
+printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') start already_recording=${{already_recording}}" >> "$LOG"
 
-if [ "$status" = "recording" ]; then
+if [ "$already_recording" = "1" ]; then
   write_state transcribing "Transcribing"
   response=$(curl -sS --max-time "$MAX_SECONDS" -X POST "$BASE/record/stop" \
     -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
@@ -185,14 +194,6 @@ if [ "$status" = "recording" ]; then
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') stop returned no text" >> "$LOG"
   fi
 else
-  response=$(curl -sS --max-time 10 -X POST "$BASE/record/start" \
-    -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
-    write_state error "Start failed"
-    printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') start failed; restarting service" >> "$LOG"
-    {restart_command}
-    exit 0
-  }}
-  printf '%s\\n' "$response" >> "$LOG"
   write_state listening "Recording"
 fi
 
@@ -471,9 +472,22 @@ if !trusted {
     hotkeyStatus.setStatus("error", "Accessibility required")
 }
 
+var activeEventTap: CFMachPort?
+
+func reenableEventTap() {
+    guard let tap = activeEventTap else {
+        log("event tap re-enable skipped; no active tap")
+        return
+    }
+
+    CGEvent.tapEnable(tap: tap, enable: true)
+    log("event tap re-enabled")
+}
+
 let callback: CGEventTapCallBack = { _, type, event, _ in
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         log("event tap disabled type=\\(type.rawValue)")
+        reenableEventTap()
         return Unmanaged.passUnretained(event)
     }
 
@@ -511,6 +525,7 @@ guard let eventTap = CGEvent.tapCreate(
     exit(0)
 }
 
+activeEventTap = eventTap
 let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -521,9 +536,9 @@ if trusted {
 app.run()
 """
     return (
-        source.replace("@@LOG_PATH@@", _swift_string(str(log_path)))
-        .replace("@@WRAPPER_PATH@@", _swift_string(str(wrapper_path)))
-        .replace("@@STATE_PATH@@", _swift_string(str(state_path)))
+        source.replace("@@LOG_PATH@@", _swift_string(_macos_path_text(log_path)))
+        .replace("@@WRAPPER_PATH@@", _swift_string(_macos_path_text(wrapper_path)))
+        .replace("@@STATE_PATH@@", _swift_string(_macos_path_text(state_path)))
     )
 
 
@@ -681,3 +696,7 @@ def _macos_hotkey_info_plist_path(runtime: PlatformRuntime | None = None) -> Pat
 
 def _swift_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _macos_path_text(path: PurePath) -> str:
+    return path.as_posix()

@@ -1,8 +1,10 @@
 import io
+import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 from transclip.cli import main
@@ -15,6 +17,7 @@ from transclip.desktop.hotkey.macos import (
     macos_hotkey_app_path,
     macos_hotkey_launch_agent_path,
     macos_hotkey_source_path,
+    macos_hotkey_state_path,
     macos_toggle_wrapper_path,
     uninstall_macos_hotkey,
 )
@@ -24,6 +27,106 @@ from tests.service_helpers import FakeRuntime, normalize_path_text
 
 
 class MacOSHotkeyTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "generated macOS shell wrapper requires a POSIX shell")
+    def test_toggle_wrapper_start_reaches_recording_without_health_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = FakeRuntime(system="Darwin", home=root / "home")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            calls_path = root / "curl-calls.txt"
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text(
+                f"""#!/bin/sh
+printf '%s\\n' "$*" >> {calls_path}
+case "$*" in
+  */record/start*)
+    printf '%s\\n' '{{"status":"recording","already_recording":false}}'
+    ;;
+  */health*)
+    printf '%s\\n' '{{"status":"ready"}}'
+    ;;
+  *)
+    printf '%s\\n' '{{"error":"unexpected endpoint"}}'
+    exit 22
+    ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+            wrapper = root / "transclip-toggle"
+            script = build_macos_toggle_wrapper(Settings(host="127.0.0.1", port=8765), runtime=runtime)
+            script = script.replace("LOCK=/tmp/transclip-toggle.lock", f"LOCK={root / 'transclip-toggle.lock'}")
+            wrapper.write_text(script, encoding="utf-8")
+            wrapper.chmod(0o755)
+            env = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+            result = subprocess.run([str(wrapper)], env=env, capture_output=True, text=True, timeout=5, check=False)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = calls_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(calls), 1)
+            self.assertIn("/record/start", calls[0])
+            self.assertNotIn("/health", calls[0])
+            self.assertIn("listening\tRecording", macos_hotkey_state_path(runtime).read_text(encoding="utf-8"))
+
+    @unittest.skipIf(os.name == "nt", "generated macOS shell wrapper requires a POSIX shell")
+    def test_toggle_wrapper_stop_falls_back_when_start_reports_already_recording(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = FakeRuntime(system="Darwin", home=root / "home")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            calls_path = root / "curl-calls.txt"
+            paste_path = root / "paste.txt"
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text(
+                f"""#!/bin/sh
+printf '%s\\n' "$*" >> {calls_path}
+case "$*" in
+  */record/start*)
+    printf '%s\\n' '{{"status":"recording","already_recording":true}}'
+    ;;
+  */record/stop*)
+    printf '%s\\n' '{{"status":"ready","text":"hello pasted"}}'
+    ;;
+  */health*)
+    printf '%s\\n' '{{"status":"recording"}}'
+    ;;
+  *)
+    printf '%s\\n' '{{"error":"unexpected endpoint"}}'
+    exit 22
+    ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+            fake_pbcopy = fake_bin / "pbcopy"
+            fake_pbcopy.write_text(f"#!/bin/sh\ncat > {paste_path}\n", encoding="utf-8")
+            fake_pbcopy.chmod(0o755)
+            wrapper = root / "transclip-toggle"
+            script = build_macos_toggle_wrapper(Settings(host="127.0.0.1", port=8765), runtime=runtime)
+            script = script.replace("LOCK=/tmp/transclip-toggle.lock", f"LOCK={root / 'transclip-toggle.lock'}")
+            wrapper.write_text(script, encoding="utf-8")
+            wrapper.chmod(0o755)
+            env = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+            result = subprocess.run([str(wrapper)], env=env, capture_output=True, text=True, timeout=5, check=False)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = calls_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(calls), 2)
+            self.assertIn("/record/start", calls[0])
+            self.assertIn("/record/stop", calls[1])
+            self.assertNotIn("/health", "\n".join(calls))
+            self.assertEqual(paste_path.read_text(encoding="utf-8"), "hello pasted")
+            self.assertIn(
+                "paste_requested\tPaste transcript",
+                macos_hotkey_state_path(runtime).read_text(encoding="utf-8"),
+            )
+
     def test_toggle_wrapper_uses_explicit_start_stop_and_lock(self):
         runtime = FakeRuntime(system="Darwin", home=Path("/Users/test"))
         script = build_macos_toggle_wrapper(Settings(host="127.0.0.1", port=8765), runtime=runtime)
@@ -37,14 +140,28 @@ class MacOSHotkeyTests(unittest.TestCase):
         self.assertIn('write_state recovering "Clearing stale action"', script)
         self.assertIn("kill_process_tree", script)
         self.assertIn("STATE=/Users/test/Library/Logs/transclip/hotkey-state.tsv", script)
-        self.assertIn('write_state shortcut "Checking service"', script)
+        self.assertIn('write_state shortcut "Starting recording"', script)
         self.assertIn('write_state listening "Recording"', script)
         self.assertIn('write_state transcribing "Transcribing"', script)
         self.assertIn('write_state paste_requested "Paste transcript"', script)
         self.assertIn('write_state finished "No transcript"', script)
         self.assertIn('write_state error "Stop timed out; restarted"', script)
+        self.assertIn("already_recording", script)
+        self.assertNotIn("$BASE/health", script)
         self.assertNotIn("osascript -e", script)
         self.assertIn("stop failed; restarting service", script)
+
+    def test_generated_macos_artifacts_use_forward_slash_paths(self):
+        runtime = FakeRuntime(system="Darwin", home=PureWindowsPath("/Users/test"))
+        script = build_macos_toggle_wrapper(Settings(host="127.0.0.1", port=8765), runtime=runtime)
+        source = build_macos_hotkey_source(
+            PureWindowsPath("/Users/test/bin/transclip-toggle"),
+            PureWindowsPath("/Users/test/Library/Logs/transclip/hotkey.log"),
+            PureWindowsPath("/Users/test/Library/Logs/transclip/hotkey-state.tsv"),
+        )
+
+        self.assertIn("STATE=/Users/test/Library/Logs/transclip/hotkey-state.tsv", script)
+        self.assertIn('let statePath = "/Users/test/Library/Logs/transclip/hotkey-state.tsv"', source)
 
     def test_hotkey_source_builds_status_item_from_state_file(self):
         source = build_macos_hotkey_source(
@@ -72,6 +189,10 @@ class MacOSHotkeyTests(unittest.TestCase):
         self.assertIn("return .labelColor", source)
         self.assertIn("postCommandV", source)
         self.assertIn('writeStateFile("finished", "Pasted")', source)
+        self.assertIn("var activeEventTap: CFMachPort?", source)
+        self.assertIn("activeEventTap = eventTap", source)
+        self.assertIn("CGEvent.tapEnable(tap: tap, enable: true)", source)
+        self.assertIn("event tap re-enabled", source)
         self.assertIn("event tap listening for Option+Space", source)
 
     def test_installer_writes_helper_app_launch_agent_and_wrapper(self):

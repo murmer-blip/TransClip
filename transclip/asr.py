@@ -4,6 +4,7 @@ import logging
 import math
 import platform as py_platform
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -12,6 +13,7 @@ from transclip.platform.runtime import PlatformRuntime
 
 from .device import resolve_torch_device
 from .mlx_audio_compat import generate_transcription
+from .mlx_audio_compat import load_model as load_mlx_model
 from .models import (
     mlx_snapshot_path,
     model_cache_path,
@@ -313,6 +315,8 @@ class MlxAudioASRBackend:
         self.local_files_only = local_files_only
         self.cache_dir = cache_dir
         self._resolved_path: str | None = None
+        self._loaded_model: Any | None = None
+        self._model_lock = threading.RLock()
         self.audio_preparer = PathAudioPreparer()
         if validate_cache:
             self._model_path()
@@ -337,19 +341,35 @@ class MlxAudioASRBackend:
         self._resolved_path = self.model
         return self._resolved_path
 
+    def _load_model(self) -> Any:
+        with self._model_lock:
+            if self._loaded_model is not None:
+                return self._loaded_model
+            self._loaded_model = load_mlx_model(self._model_path())
+            return self._loaded_model
+
     def transcribe(self, wav_path: Path, keywords: list[str] | None = None) -> TranscriptionResult:
         del keywords
         timings: dict[str, float] = {}
+        audio: PreparedPathAudio | None = None
         with timed_ms(timings, "asr"):
-            model_path = self._model_path()
-            audio = self.audio_preparer.prepare(wav_path)
+            with timed_ms(timings, "model_load"):
+                model = self._load_model()
+            with timed_ms(timings, "audio_prepare"):
+                audio = self.audio_preparer.prepare(wav_path)
             try:
                 with tempfile.TemporaryDirectory(prefix="transclip-mlx-") as tmp:
                     output_stem = str(Path(tmp) / "transcript")
-                    result = generate_transcription(model_path, audio.wav_path, output_stem)
+                    with timed_ms(timings, "generate_write"):
+                        result = generate_transcription(
+                            model,
+                            audio.wav_path,
+                            output_stem,
+                            language=self.settings.language if self.settings else None,
+                        )
                     text = getattr(result, "text", None) or str(result)
             finally:
-                if getattr(audio, "temporary", False):
+                if audio is not None and getattr(audio, "temporary", False):
                     audio.wav_path.unlink(missing_ok=True)
         return TranscriptionResult(text.strip(), timings, self.name, self.model)
 
