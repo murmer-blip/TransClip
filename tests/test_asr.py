@@ -84,7 +84,12 @@ class ASRTests(unittest.TestCase):
         loaded_model = object()
         load_calls = []
         generated_models = []
-        backend = MlxAudioASRBackend("mlx-community/example", local_files_only=False)
+        generated_languages = []
+        backend = MlxAudioASRBackend(
+            "mlx-community/example",
+            Settings(language="en"),
+            local_files_only=False,
+        )
         backend.audio_preparer = SimpleNamespace(
             prepare=lambda path: SimpleNamespace(wav_path=path, sample_rate=16000, temporary=False)
         )
@@ -93,9 +98,10 @@ class ASRTests(unittest.TestCase):
             load_calls.append(model_path)
             return loaded_model
 
-        def fake_generate(model, audio_path, output_stem):
+        def fake_generate(model, audio_path, output_stem, **kwargs):
             del audio_path, output_stem
             generated_models.append(model)
+            generated_languages.append(kwargs["language"])
             return SimpleNamespace(text=f"transcript {len(generated_models)}")
 
         with (
@@ -107,6 +113,7 @@ class ASRTests(unittest.TestCase):
 
         self.assertEqual(load_calls, ["mlx-community/example"])
         self.assertEqual(generated_models, [loaded_model, loaded_model])
+        self.assertEqual(generated_languages, ["en", "en"])
         self.assertEqual(first.text, "transcript 1")
         self.assertEqual(second.text, "transcript 2")
         self.assertIn("model_load", second.timings_ms)

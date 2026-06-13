@@ -16,7 +16,7 @@ def load_model(model_path: str) -> Any:
     return mlx_load_model(model_path)
 
 
-def generate_transcription(model: Any, audio_path: Path, output_stem: str) -> Any:
+def generate_transcription(model: Any, audio_path: Path, output_stem: str, **generate_options: Any) -> Any:
     try:
         from mlx_audio.stt.generate import generate_transcription as mlx_generate
     except ImportError as exc:
@@ -27,6 +27,7 @@ def generate_transcription(model: Any, audio_path: Path, output_stem: str) -> An
     kwargs = {
         "output_path": output_stem,
         "format": "txt",
+        **generate_options,
     }
     signature = inspect.signature(mlx_generate)
     if "model" in signature.parameters:

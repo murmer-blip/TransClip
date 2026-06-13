@@ -264,19 +264,36 @@ def _candidate_input_devices(sd, preferred: str) -> Iterator[object]:
         return True
 
     preferred = preferred.strip()
-    if preferred:
-        for candidate in _matching_input_devices(sd, preferred):
-            if should_emit(candidate):
-                yield candidate
     default_owner = getattr(sd, "default", None)
     default = _default_input_device(getattr(default_owner, "device", None))
-    if should_emit(default):
+    if preferred:
+        if preferred.isdigit():
+            if should_emit(int(preferred)):
+                yield int(preferred)
+        else:
+            if _default_device_matches_preferred(sd, default, preferred) and should_emit(default):
+                yield default
+            for candidate in _matching_input_devices(sd, preferred):
+                if should_emit(candidate):
+                    yield candidate
+    elif should_emit(default):
         yield default
     for candidate in _all_input_devices(sd):
         if should_emit(candidate):
             yield candidate
     if not emitted:
         yield None
+
+
+def _default_device_matches_preferred(sd, default: object, preferred: str) -> bool:
+    if default in {None, -1}:
+        return False
+    try:
+        info = sd.query_devices(default, "input")
+    except Exception:
+        return False
+    name = str(info.get("name", "") if isinstance(info, dict) else info)
+    return preferred.lower() == name.lower()
 
 
 def _matching_input_devices(sd, preferred: str) -> list[object]:

@@ -12,7 +12,8 @@ from typing import Any, Protocol
 from transclip.platform.runtime import PlatformRuntime
 
 from .device import resolve_torch_device
-from .mlx_audio_compat import generate_transcription, load_model as load_mlx_model
+from .mlx_audio_compat import generate_transcription
+from .mlx_audio_compat import load_model as load_mlx_model
 from .models import (
     mlx_snapshot_path,
     model_cache_path,
@@ -360,7 +361,12 @@ class MlxAudioASRBackend:
                 with tempfile.TemporaryDirectory(prefix="transclip-mlx-") as tmp:
                     output_stem = str(Path(tmp) / "transcript")
                     with timed_ms(timings, "generate_write"):
-                        result = generate_transcription(model, audio.wav_path, output_stem)
+                        result = generate_transcription(
+                            model,
+                            audio.wav_path,
+                            output_stem,
+                            language=self.settings.language if self.settings else None,
+                        )
                     text = getattr(result, "text", None) or str(result)
             finally:
                 if audio is not None and getattr(audio, "temporary", False):
