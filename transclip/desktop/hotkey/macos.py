@@ -131,7 +131,7 @@ clear_stale_lock_owner() {{
 }}
 
 printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') wrapper invoked" >> "$LOG"
-write_state shortcut "Checking service"
+write_state shortcut "Starting recording"
 
 if ! mkdir "$LOCK" 2>/dev/null; then
   now=$(date +%s)
@@ -155,16 +155,25 @@ fi
 printf '%s\\n' "$$" > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT HUP INT TERM
 
-health=$(curl -sS --max-time 5 "$BASE/health" 2>>"$LOG") || {{
-  write_state error "Health check failed"
-  printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') health failed; restarting service" >> "$LOG"
+response=$(curl -sS --max-time 10 -X POST "$BASE/record/start" \
+  -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
+  write_state error "Start failed"
+  printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') start failed; restarting service" >> "$LOG"
   {restart_command}
   exit 0
 }}
-status=$(printf '%s' "$health" | {python} -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>>"$LOG")
-printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') status=${{status}}" >> "$LOG"
+printf '%s\\n' "$response" >> "$LOG"
+case "$response" in
+  *'"already_recording": true'*|*'"already_recording":true'*)
+    already_recording=1
+    ;;
+  *)
+    already_recording=0
+    ;;
+esac
+printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') start already_recording=${{already_recording}}" >> "$LOG"
 
-if [ "$status" = "recording" ]; then
+if [ "$already_recording" = "1" ]; then
   write_state transcribing "Transcribing"
   response=$(curl -sS --max-time "$MAX_SECONDS" -X POST "$BASE/record/stop" \
     -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
@@ -185,14 +194,6 @@ if [ "$status" = "recording" ]; then
     printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') stop returned no text" >> "$LOG"
   fi
 else
-  response=$(curl -sS --max-time 10 -X POST "$BASE/record/start" \
-    -H 'content-type: application/json' --data '{{}}' 2>>"$LOG") || {{
-    write_state error "Start failed"
-    printf '%s\\n' "$(date '+%Y-%m-%dT%H:%M:%S%z') start failed; restarting service" >> "$LOG"
-    {restart_command}
-    exit 0
-  }}
-  printf '%s\\n' "$response" >> "$LOG"
   write_state listening "Recording"
 fi
 
