@@ -4,16 +4,12 @@ import logging
 import math
 import subprocess
 import tempfile
-import wave
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol
 
 from transclip.asr import (
     GRANITE_NAR_BUCKET_SECONDS,
-    MLX_AUDIO_BUCKET_SECONDS,
-    MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS,
-    MLX_MIN_AUDIO_SECONDS,
     MLX_SHORT_AUDIO_BUCKET_SECONDS,
     MLX_WARM_BUCKET_MAX_SECONDS,
     ASRBackend,
@@ -216,7 +212,9 @@ class InferenceEngine:
     def warm_bucket_shapes(self, stop_event: StopSignal) -> None:
         """Compile remaining backend input buckets in the background after readiness."""
         if self.asr_backend.name == "mlx-audio":
-            self._warm_mlx_audio_buckets(stop_event)
+            # Long MLX background warmup regresses short interactive dictation:
+            # it can churn the compiled state and make the next real mic clip
+            # pay a 20s+ first-pass cost. Keep MLX warmup in startup only.
             return
 
         transcribe_waveform = _waveform_transcriber(self.asr_backend)
@@ -243,66 +241,6 @@ class InferenceEngine:
             except Exception:
                 logger.exception("Bucket pre-warm failed at %ss; aborting pre-warm", seconds)
                 return
-
-    def _warm_mlx_audio_buckets(self, stop_event: StopSignal) -> None:
-        logger = logging.getLogger(__name__)
-        sample_rate = max(1, self.settings.sample_rate)
-        with tempfile.TemporaryDirectory(prefix="transclip-bucket-warm-") as tmp:
-            tmp_path = Path(tmp)
-            for seconds in _mlx_background_warm_seconds():
-                while _dictation_busy(self.dictation_session.status()):
-                    if stop_event.wait(1.0):
-                        return
-                if stop_event.is_set():
-                    return
-                try:
-                    pcm16_warmup = _warmup_pcm16_chirp(sample_rate, seconds=seconds)
-                    wav_path = write_wav(
-                        tmp_path / f"warmup-{seconds:g}s.wav",
-                        pcm16_warmup,
-                        sample_rate,
-                    )
-                    self.asr_backend.transcribe(wav_path, keywords=[])
-                    logger.info("Pre-warmed MLX ASR audio bucket at %ss", seconds)
-                except Exception:
-                    logger.exception("MLX audio bucket pre-warm failed at %ss; aborting pre-warm", seconds)
-                    return
-            self._rewarm_mlx_speech_bucket(tmp_path, sample_rate, stop_event)
-
-    def _rewarm_mlx_speech_bucket(
-        self,
-        directory: Path,
-        sample_rate: int,
-        stop_event: StopSignal,
-    ) -> None:
-        if not _mlx_settings(self.settings):
-            return
-        logger = logging.getLogger(__name__)
-        for wav_path in _mlx_debug_capture_warmup_wavs(self.settings):
-            while _dictation_busy(self.dictation_session.status()):
-                if stop_event.wait(1.0):
-                    return
-            if stop_event.is_set():
-                return
-            try:
-                self.asr_backend.transcribe(wav_path, keywords=[])
-                logger.info("Re-warmed MLX ASR debug capture bucket from %s", wav_path)
-            except Exception:
-                logger.exception("MLX debug capture re-warm failed for %s", wav_path)
-                break
-        while _dictation_busy(self.dictation_session.status()):
-            if stop_event.wait(1.0):
-                return
-        if stop_event.is_set():
-            return
-        speech_warmup = _mlx_speech_warmup_wav(directory, sample_rate)
-        if speech_warmup is None or stop_event.is_set():
-            return
-        try:
-            self.asr_backend.transcribe(speech_warmup, keywords=[])
-            logger.info("Re-warmed MLX ASR speech bucket")
-        except Exception:
-            logger.exception("MLX speech bucket re-warm failed")
 
     def process_asr_result(
         self,
@@ -413,15 +351,6 @@ def _bucket_warm_seconds(max_seconds: int) -> range:
     return range(bucket_step_s * 2, max_seconds + 1, bucket_step_s)
 
 
-def _mlx_background_warm_seconds() -> list[float]:
-    bucket_seconds = max(1, int(MLX_AUDIO_BUCKET_SECONDS))
-    start = MLX_WARM_BUCKET_MAX_SECONDS + bucket_seconds
-    return [
-        float(seconds)
-        for seconds in range(start, MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS + 1, bucket_seconds)
-    ]
-
-
 def _asr_warm_seconds(backend: ASRBackend) -> list[float]:
     if backend.name == "mlx-audio":
         bucket_seconds = max(1, int(MLX_SHORT_AUDIO_BUCKET_SECONDS))
@@ -482,50 +411,6 @@ def _mlx_speech_warmup_wav(directory: Path, sample_rate: int) -> Path | None:
         )
         return None
     return wav_path if wav_path.exists() else None
-
-
-def _mlx_debug_capture_warmup_wavs(settings: Settings) -> list[Path]:
-    if not settings.debug_capture:
-        return []
-    root = Path(settings.debug_capture_dir).expanduser()
-    if not root.exists():
-        return []
-
-    by_bucket: dict[int, Path] = {}
-    audio_paths = sorted(
-        root.glob("*/audio.wav"),
-        key=lambda path: _path_mtime(path),
-        reverse=True,
-    )
-    for audio_path in audio_paths:
-        duration = _wav_duration_seconds(audio_path)
-        if duration is None or duration <= 0 or duration > MLX_WARM_BUCKET_MAX_SECONDS:
-            continue
-        bucket = math.ceil(max(duration, MLX_MIN_AUDIO_SECONDS) / MLX_SHORT_AUDIO_BUCKET_SECONDS)
-        if bucket < 1 or bucket > MLX_WARM_BUCKET_MAX_SECONDS:
-            continue
-        by_bucket.setdefault(bucket, audio_path)
-        if len(by_bucket) >= MLX_WARM_BUCKET_MAX_SECONDS:
-            break
-    return [by_bucket[bucket] for bucket in sorted(by_bucket)]
-
-
-def _path_mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
-def _wav_duration_seconds(path: Path) -> float | None:
-    try:
-        with wave.open(str(path), "rb") as wav:
-            frame_rate = wav.getframerate()
-            if frame_rate <= 0:
-                return None
-            return wav.getnframes() / frame_rate
-    except (OSError, EOFError, wave.Error):
-        return None
 
 
 def _dictation_busy(status: str) -> bool:

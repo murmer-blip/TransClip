@@ -334,10 +334,11 @@ through `warm_bucket_shapes_s`, in 2 s steps) are compiled in a background
 thread that yields whenever a recording is active, so the first long utterance
 after a restart does not pay a multi-second ROCm shape compile.
 
-On macOS MLX, startup warms 1 s buckets from 1-12 s before readiness. The
-background warmer then extends the 16-60 s buckets in 4 s steps and finishes by
-re-warming a short spoken bucket. That keeps normal one-sentence dictation hot
-after the long buckets have been compiled.
+On macOS MLX, startup warms 1 s buckets from 1-12 s before readiness. MLX skips
+post-ready background bucket warming because warming long 16-60 s buckets can
+churn the compiled state and make the next short microphone dictation pay a
+large first-pass decode cost. For the interactive macOS path, keeping the short
+startup buckets hot is more important than pre-compiling long clips.
 
 | Platform | Batch default | Incremental | Notes |
 |----------|---------------|-------------|-------|
