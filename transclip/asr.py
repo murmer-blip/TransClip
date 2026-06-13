@@ -366,6 +366,7 @@ class MlxAudioASRBackend:
                             audio.wav_path,
                             output_stem,
                             language=self.settings.language if self.settings else None,
+                            temperature=0.0,
                         )
                     text = getattr(result, "text", None) or str(result)
             finally:

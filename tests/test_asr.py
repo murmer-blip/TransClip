@@ -101,7 +101,7 @@ class ASRTests(unittest.TestCase):
         def fake_generate(model, audio_path, output_stem, **kwargs):
             del audio_path, output_stem
             generated_models.append(model)
-            generated_languages.append(kwargs["language"])
+            generated_languages.append((kwargs["language"], kwargs["temperature"]))
             return SimpleNamespace(text=f"transcript {len(generated_models)}")
 
         with (
@@ -113,7 +113,7 @@ class ASRTests(unittest.TestCase):
 
         self.assertEqual(load_calls, ["mlx-community/example"])
         self.assertEqual(generated_models, [loaded_model, loaded_model])
-        self.assertEqual(generated_languages, ["en", "en"])
+        self.assertEqual(generated_languages, [("en", 0.0), ("en", 0.0)])
         self.assertEqual(first.text, "transcript 1")
         self.assertEqual(second.text, "transcript 2")
         self.assertIn("model_load", second.timings_ms)
