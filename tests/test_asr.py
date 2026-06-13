@@ -404,6 +404,54 @@ class ASRTests(unittest.TestCase):
         np.testing.assert_allclose(writes[0][1][:25], 0.1)
         np.testing.assert_allclose(writes[0][1][25:], 0.0)
 
+    def test_path_audio_preparer_uses_one_second_buckets_for_short_audio(self):
+        samples = np.array([[0.1]] * 25, dtype=np.float32)
+        writes = []
+        fake_soundfile = SimpleNamespace(
+            read=lambda *_args, **_kwargs: (samples, 10),
+            write=lambda path, data, sample_rate: writes.append(
+                (Path(path), np.array(data), sample_rate)
+            ),
+        )
+
+        with patch.dict("sys.modules", {"soundfile": fake_soundfile}):
+            audio = PathAudioPreparer(
+                target_sample_rate=10,
+                bucket_seconds=4.0,
+                minimum_seconds=1.0,
+                short_bucket_seconds=1.0,
+                short_bucket_max_seconds=12.0,
+            ).prepare(Path("sample.wav"))
+
+        self.assertEqual(audio.duration_seconds, 2.5)
+        self.assertEqual(audio.padded_duration_seconds, 3.0)
+        self.assertEqual(len(writes[0][1]), 30)
+        np.testing.assert_allclose(writes[0][1][:25], 0.1)
+        np.testing.assert_allclose(writes[0][1][25:], 0.0)
+
+    def test_path_audio_preparer_uses_long_buckets_above_short_range(self):
+        samples = np.array([[0.1]] * 125, dtype=np.float32)
+        writes = []
+        fake_soundfile = SimpleNamespace(
+            read=lambda *_args, **_kwargs: (samples, 10),
+            write=lambda path, data, sample_rate: writes.append(
+                (Path(path), np.array(data), sample_rate)
+            ),
+        )
+
+        with patch.dict("sys.modules", {"soundfile": fake_soundfile}):
+            audio = PathAudioPreparer(
+                target_sample_rate=10,
+                bucket_seconds=4.0,
+                minimum_seconds=1.0,
+                short_bucket_seconds=1.0,
+                short_bucket_max_seconds=12.0,
+            ).prepare(Path("sample.wav"))
+
+        self.assertEqual(audio.duration_seconds, 12.5)
+        self.assertEqual(audio.padded_duration_seconds, 16.0)
+        self.assertEqual(len(writes[0][1]), 160)
+
 
 if __name__ == "__main__":
     unittest.main()

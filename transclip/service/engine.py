@@ -12,6 +12,7 @@ from transclip.asr import (
     GRANITE_NAR_BUCKET_SECONDS,
     MLX_AUDIO_BUCKET_SECONDS,
     MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS,
+    MLX_SHORT_AUDIO_BUCKET_SECONDS,
     MLX_WARM_BUCKET_MAX_SECONDS,
     ASRBackend,
     TranscriptionResult,
@@ -200,16 +201,15 @@ class InferenceEngine:
             warm_seconds = _asr_warm_seconds(self.asr_backend)
             speech_warmup = _mlx_speech_warmup_wav(tmp_path, sample_rate) if _mlx_settings(self.settings) else None
             for seconds in warm_seconds:
-                if speech_warmup is not None and seconds == warm_seconds[0]:
-                    wav_path = speech_warmup
-                else:
-                    pcm16_warmup = _warmup_pcm16_chirp(sample_rate, seconds=seconds)
-                    wav_path = write_wav(
-                        tmp_path / f"warmup-{seconds:g}s.wav",
-                        pcm16_warmup,
-                        sample_rate,
-                    )
+                pcm16_warmup = _warmup_pcm16_chirp(sample_rate, seconds=seconds)
+                wav_path = write_wav(
+                    tmp_path / f"warmup-{seconds:g}s.wav",
+                    pcm16_warmup,
+                    sample_rate,
+                )
                 self.asr_backend.transcribe(wav_path, keywords=[])
+            if speech_warmup is not None:
+                self.asr_backend.transcribe(speech_warmup, keywords=[])
 
     def warm_bucket_shapes(self, stop_event: StopSignal) -> None:
         """Compile remaining backend input buckets in the background after readiness."""
@@ -409,7 +409,7 @@ def _mlx_background_warm_seconds() -> list[float]:
 
 def _asr_warm_seconds(backend: ASRBackend) -> list[float]:
     if backend.name == "mlx-audio":
-        bucket_seconds = max(1, int(MLX_AUDIO_BUCKET_SECONDS))
+        bucket_seconds = max(1, int(MLX_SHORT_AUDIO_BUCKET_SECONDS))
         return [
             float(seconds)
             for seconds in range(bucket_seconds, MLX_WARM_BUCKET_MAX_SECONDS + 1, bucket_seconds)
@@ -438,7 +438,7 @@ def _mlx_speech_warmup_wav(directory: Path, sample_rate: int) -> Path | None:
                 "-o",
                 str(caf_path),
                 f"--data-format={data_format}",
-                "Testing one, two, three.",
+                "Testing 1, 2, 3.",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

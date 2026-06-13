@@ -61,9 +61,11 @@ class PreparedPathAudio:
 
 EDGE_SILENCE_TRIM_THRESHOLD = 0.003
 EDGE_SILENCE_TRIM_PADDING_SECONDS = 0.2
+MLX_SHORT_AUDIO_BUCKET_SECONDS = 1.0
+MLX_SHORT_AUDIO_BUCKET_MAX_SECONDS = 12.0
 MLX_AUDIO_BUCKET_SECONDS = 4.0
-MLX_MIN_AUDIO_SECONDS = 4.0
-MLX_WARM_BUCKET_MAX_SECONDS = 24
+MLX_MIN_AUDIO_SECONDS = 1.0
+MLX_WARM_BUCKET_MAX_SECONDS = 12
 MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS = 60
 MLX_TOKENS_PER_AUDIO_SECOND = 6
 MLX_SAMPLE_LEN_PADDING_TOKENS = 32
@@ -113,10 +115,14 @@ class PathAudioPreparer:
         *,
         bucket_seconds: float = 0.0,
         minimum_seconds: float = 0.0,
+        short_bucket_seconds: float = 0.0,
+        short_bucket_max_seconds: float = 0.0,
     ):
         self.target_sample_rate = target_sample_rate
         self.bucket_seconds = bucket_seconds
         self.minimum_seconds = minimum_seconds
+        self.short_bucket_seconds = short_bucket_seconds
+        self.short_bucket_max_seconds = short_bucket_max_seconds
         self.loader = AudioLoader(target_sample_rate)
 
     def prepare(self, wav_path: Path) -> PreparedPathAudio:
@@ -132,6 +138,8 @@ class PathAudioPreparer:
             self.target_sample_rate,
             bucket_seconds=self.bucket_seconds,
             minimum_seconds=self.minimum_seconds,
+            short_bucket_seconds=self.short_bucket_seconds,
+            short_bucket_max_seconds=self.short_bucket_max_seconds,
         )
         padded_duration_seconds = len(mono) / self.target_sample_rate
         changed = changed or bucket_padded
@@ -363,6 +371,8 @@ class MlxAudioASRBackend:
         self.audio_preparer = PathAudioPreparer(
             bucket_seconds=MLX_AUDIO_BUCKET_SECONDS,
             minimum_seconds=MLX_MIN_AUDIO_SECONDS,
+            short_bucket_seconds=MLX_SHORT_AUDIO_BUCKET_SECONDS,
+            short_bucket_max_seconds=MLX_SHORT_AUDIO_BUCKET_MAX_SECONDS,
         )
         if validate_cache:
             self._model_path()
@@ -581,23 +591,50 @@ def _pad_to_audio_bucket(
     *,
     bucket_seconds: float,
     minimum_seconds: float,
+    short_bucket_seconds: float = 0.0,
+    short_bucket_max_seconds: float = 0.0,
 ) -> tuple[Any, bool]:
-    if bucket_seconds <= 0 and minimum_seconds <= 0:
+    if bucket_seconds <= 0 and minimum_seconds <= 0 and short_bucket_seconds <= 0:
         return samples, False
     import numpy as np
 
     current = len(samples)
     minimum = max(0, round(sample_rate * minimum_seconds))
-    if bucket_seconds > 0:
-        bucket = max(1, round(sample_rate * bucket_seconds))
-        target = max(minimum, math.ceil(max(current, 1) / bucket) * bucket)
-    else:
-        target = minimum
+    target = _audio_bucket_target_samples(
+        current,
+        sample_rate=sample_rate,
+        bucket_seconds=bucket_seconds,
+        minimum=minimum,
+        short_bucket_seconds=short_bucket_seconds,
+        short_bucket_max_seconds=short_bucket_max_seconds,
+    )
     if target <= current:
         return samples, False
     padded = np.zeros(target, dtype=getattr(samples, "dtype", np.float32))
     padded[:current] = samples
     return padded, True
+
+
+def _audio_bucket_target_samples(
+    current: int,
+    *,
+    sample_rate: int,
+    bucket_seconds: float,
+    minimum: int,
+    short_bucket_seconds: float,
+    short_bucket_max_seconds: float,
+) -> int:
+    if current <= minimum and minimum > 0:
+        return minimum
+    if short_bucket_seconds > 0 and short_bucket_max_seconds > 0:
+        short_bucket = max(1, round(sample_rate * short_bucket_seconds))
+        short_maximum = max(1, round(sample_rate * short_bucket_max_seconds))
+        if current <= short_maximum:
+            return max(minimum, math.ceil(max(current, 1) / short_bucket) * short_bucket)
+    if bucket_seconds > 0:
+        bucket = max(1, round(sample_rate * bucket_seconds))
+        return max(minimum, math.ceil(max(current, 1) / bucket) * bucket)
+    return minimum
 
 
 def _mlx_default_sample_len(model: Any) -> int:
