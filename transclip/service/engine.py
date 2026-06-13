@@ -9,6 +9,8 @@ from typing import Any, Protocol
 
 from transclip.asr import (
     GRANITE_NAR_BUCKET_SECONDS,
+    MLX_AUDIO_BUCKET_SECONDS,
+    MLX_WARM_BUCKET_MAX_SECONDS,
     ASRBackend,
     TranscriptionResult,
     build_asr_backend,
@@ -191,10 +193,11 @@ class InferenceEngine:
     def warm_asr(self) -> None:
         """Load and compile the ASR backend before the service reports ready."""
         sample_rate = max(1, self.settings.sample_rate)
-        pcm16_warmup = _warmup_pcm16_chirp(sample_rate)
         with tempfile.TemporaryDirectory(prefix="transclip-warmup-") as tmp:
-            wav_path = write_wav(Path(tmp) / "warmup.wav", pcm16_warmup, sample_rate)
-            self.asr_backend.transcribe(wav_path, keywords=[])
+            for seconds in _asr_warm_seconds(self.asr_backend):
+                pcm16_warmup = _warmup_pcm16_chirp(sample_rate, seconds=seconds)
+                wav_path = write_wav(Path(tmp) / f"warmup-{seconds:g}s.wav", pcm16_warmup, sample_rate)
+                self.asr_backend.transcribe(wav_path, keywords=[])
 
     def warm_bucket_shapes(self, stop_event: StopSignal) -> None:
         """Compile remaining NAR bucket shapes in the background after readiness."""
@@ -330,6 +333,16 @@ def _waveform_transcriber(backend: ASRBackend) -> WaveformTranscriber | None:
 def _bucket_warm_seconds(max_seconds: int) -> range:
     bucket_step_s = max(1, int(GRANITE_NAR_BUCKET_SECONDS))
     return range(bucket_step_s * 2, max_seconds + 1, bucket_step_s)
+
+
+def _asr_warm_seconds(backend: ASRBackend) -> list[float]:
+    if backend.name == "mlx-audio":
+        bucket_seconds = max(1, int(MLX_AUDIO_BUCKET_SECONDS))
+        return [
+            float(seconds)
+            for seconds in range(bucket_seconds, MLX_WARM_BUCKET_MAX_SECONDS + 1, bucket_seconds)
+        ]
+    return [0.25]
 
 
 def _warmup_pcm16_chirp(sample_rate: int, seconds: float = 0.25) -> bytes:

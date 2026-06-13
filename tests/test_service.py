@@ -27,6 +27,22 @@ class FakeWaveformASR(FakeASR):
         return self.transcribe(Path("waveform.wav"), keywords=[])
 
 
+class FakeMlxASR(FakeASR):
+    name = "mlx-audio"
+
+    def __init__(self):
+        super().__init__()
+        self.durations = []
+        self.non_silent = []
+
+    def transcribe(self, wav_path: Path, keywords: list[str] | None = None):
+        with wave.open(str(wav_path), "rb") as wav:
+            frames = wav.readframes(wav.getnframes())
+            self.durations.append(wav.getnframes() / wav.getframerate())
+            self.non_silent.append(any(frames))
+        return super().transcribe(wav_path, keywords=keywords)
+
+
 class FakeStopEvent:
     def __init__(self):
         self.wait_calls = 0
@@ -116,6 +132,19 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(asr.sample_rate, 8000)
         self.assertTrue(any(asr.frames))
+
+    def test_engine_warms_mlx_audio_buckets_through_24_seconds(self):
+        asr = FakeMlxASR()
+        InferenceEngine(
+            Settings(sample_rate=16000),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+            warm_asr=True,
+        )
+
+        self.assertEqual(asr.durations, [4.0, 8.0, 12.0, 16.0, 20.0, 24.0])
+        self.assertEqual(asr.keywords, [])
+        self.assertTrue(all(asr.non_silent))
 
     def test_engine_warms_remaining_bucket_shapes(self):
         asr = FakeWaveformASR()
