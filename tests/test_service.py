@@ -223,6 +223,32 @@ class ServiceTests(unittest.TestCase):
         )
         self.assertEqual(asr.calls[-1], speech_wav)
 
+    def test_background_mlx_warmup_rewarms_recent_debug_capture_buckets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_root = Path(tmp) / "captures"
+            _write_test_wav(capture_root / "older-3s" / "audio.wav", seconds=2.5, sample_rate=16000)
+            _write_test_wav(capture_root / "newer-3s" / "audio.wav", seconds=2.6, sample_rate=16000)
+            _write_test_wav(capture_root / "bucket-4s" / "audio.wav", seconds=3.8, sample_rate=16000)
+            asr = FakeMlxASR()
+            engine = InferenceEngine(
+                Settings(
+                    sample_rate=16000,
+                    asr_backend="mlx_audio_whisper",
+                    debug_capture=True,
+                    debug_capture_dir=str(capture_root),
+                ),
+                asr_backend=asr,
+                cleanup_backend=FaithfulRuleCleanupBackend(),
+            )
+
+            with patch(
+                "transclip.service.engine._mlx_speech_warmup_wav",
+                return_value=None,
+            ):
+                engine.warm_bucket_shapes(threading.Event())
+
+        self.assertEqual(asr.durations[-2:], [2.6, 3.8])
+
     def test_background_mlx_warmup_waits_while_dictation_is_busy(self):
         asr = FakeMlxASR()
         engine = InferenceEngine(

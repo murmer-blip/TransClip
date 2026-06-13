@@ -4,6 +4,7 @@ import logging
 import math
 import subprocess
 import tempfile
+import wave
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol
@@ -12,6 +13,7 @@ from transclip.asr import (
     GRANITE_NAR_BUCKET_SECONDS,
     MLX_AUDIO_BUCKET_SECONDS,
     MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS,
+    MLX_MIN_AUDIO_SECONDS,
     MLX_SHORT_AUDIO_BUCKET_SECONDS,
     MLX_WARM_BUCKET_MAX_SECONDS,
     ASRBackend,
@@ -275,6 +277,19 @@ class InferenceEngine:
     ) -> None:
         if not _mlx_settings(self.settings):
             return
+        logger = logging.getLogger(__name__)
+        for wav_path in _mlx_debug_capture_warmup_wavs(self.settings):
+            while _dictation_busy(self.dictation_session.status()):
+                if stop_event.wait(1.0):
+                    return
+            if stop_event.is_set():
+                return
+            try:
+                self.asr_backend.transcribe(wav_path, keywords=[])
+                logger.info("Re-warmed MLX ASR debug capture bucket from %s", wav_path)
+            except Exception:
+                logger.exception("MLX debug capture re-warm failed for %s", wav_path)
+                break
         while _dictation_busy(self.dictation_session.status()):
             if stop_event.wait(1.0):
                 return
@@ -285,9 +300,9 @@ class InferenceEngine:
             return
         try:
             self.asr_backend.transcribe(speech_warmup, keywords=[])
-            logging.getLogger(__name__).info("Re-warmed MLX ASR speech bucket")
+            logger.info("Re-warmed MLX ASR speech bucket")
         except Exception:
-            logging.getLogger(__name__).exception("MLX speech bucket re-warm failed")
+            logger.exception("MLX speech bucket re-warm failed")
 
     def process_asr_result(
         self,
@@ -467,6 +482,50 @@ def _mlx_speech_warmup_wav(directory: Path, sample_rate: int) -> Path | None:
         )
         return None
     return wav_path if wav_path.exists() else None
+
+
+def _mlx_debug_capture_warmup_wavs(settings: Settings) -> list[Path]:
+    if not settings.debug_capture:
+        return []
+    root = Path(settings.debug_capture_dir).expanduser()
+    if not root.exists():
+        return []
+
+    by_bucket: dict[int, Path] = {}
+    audio_paths = sorted(
+        root.glob("*/audio.wav"),
+        key=lambda path: _path_mtime(path),
+        reverse=True,
+    )
+    for audio_path in audio_paths:
+        duration = _wav_duration_seconds(audio_path)
+        if duration is None or duration <= 0 or duration > MLX_WARM_BUCKET_MAX_SECONDS:
+            continue
+        bucket = math.ceil(max(duration, MLX_MIN_AUDIO_SECONDS) / MLX_SHORT_AUDIO_BUCKET_SECONDS)
+        if bucket < 1 or bucket > MLX_WARM_BUCKET_MAX_SECONDS:
+            continue
+        by_bucket.setdefault(bucket, audio_path)
+        if len(by_bucket) >= MLX_WARM_BUCKET_MAX_SECONDS:
+            break
+    return [by_bucket[bucket] for bucket in sorted(by_bucket)]
+
+
+def _path_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _wav_duration_seconds(path: Path) -> float | None:
+    try:
+        with wave.open(str(path), "rb") as wav:
+            frame_rate = wav.getframerate()
+            if frame_rate <= 0:
+                return None
+            return wav.getnframes() / frame_rate
+    except (OSError, EOFError, wave.Error):
+        return None
 
 
 def _dictation_busy(status: str) -> bool:
