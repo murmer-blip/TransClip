@@ -298,6 +298,49 @@ class ServiceTests(unittest.TestCase):
         finally:
             stop_server(server, thread)
 
+    def test_http_health_reports_transcribing_after_recording_stops(self):
+        transcribe_entered = threading.Event()
+        transcribe_release = threading.Event()
+
+        class BlockingASR(FakeASR):
+            def transcribe(self, wav_path: Path, keywords: list[str] | None = None):
+                transcribe_entered.set()
+                transcribe_release.wait(timeout=2)
+                return super().transcribe(wav_path, keywords=keywords)
+
+        settings = Settings(host="127.0.0.1", port=0)
+        asr = BlockingASR()
+        engine = InferenceEngine(
+            settings,
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+        server, thread, host, port = serve_test_engine(settings, engine)
+        base_url = f"http://{host}:{port}"
+        try:
+            with patch("transclip.service.engine.AudioRecorder", FakeRecorder):
+                http_json("POST", f"{base_url}/record/start", {})
+                stopped = {}
+                stop_thread = threading.Thread(
+                    target=lambda: stopped.update(
+                        http_json("POST", f"{base_url}/record/stop", {"cleanup": True})
+                    )
+                )
+                stop_thread.start()
+                self.assertTrue(transcribe_entered.wait(timeout=2))
+
+                health = http_json("GET", f"{base_url}/health")
+                self.assertEqual(health["status"], "transcribing")
+
+                transcribe_release.set()
+                stop_thread.join(timeout=2)
+
+            self.assertEqual(stopped["text"], "Hello from ROCm.")
+            self.assertEqual(http_json("GET", f"{base_url}/health")["status"], "ready")
+        finally:
+            transcribe_release.set()
+            stop_server(server, thread)
+
     def test_http_record_stop_can_discard_short_recording(self):
         settings = Settings(host="127.0.0.1", port=0)
         engine = InferenceEngine(
