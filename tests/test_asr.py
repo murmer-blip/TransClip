@@ -80,6 +80,39 @@ class ASRTests(unittest.TestCase):
         )
         self.assertIsInstance(backend, MlxAudioASRBackend)
 
+    def test_mlx_audio_reuses_loaded_model_object_across_transcriptions(self):
+        loaded_model = object()
+        load_calls = []
+        generated_models = []
+        backend = MlxAudioASRBackend("mlx-community/example", local_files_only=False)
+        backend.audio_preparer = SimpleNamespace(
+            prepare=lambda path: SimpleNamespace(wav_path=path, sample_rate=16000, temporary=False)
+        )
+
+        def fake_load_model(model_path):
+            load_calls.append(model_path)
+            return loaded_model
+
+        def fake_generate(model, audio_path, output_stem):
+            del audio_path, output_stem
+            generated_models.append(model)
+            return SimpleNamespace(text=f"transcript {len(generated_models)}")
+
+        with (
+            patch("transclip.asr.load_mlx_model", side_effect=fake_load_model),
+            patch("transclip.asr.generate_transcription", side_effect=fake_generate),
+        ):
+            first = backend.transcribe(Path("first.wav"))
+            second = backend.transcribe(Path("second.wav"))
+
+        self.assertEqual(load_calls, ["mlx-community/example"])
+        self.assertEqual(generated_models, [loaded_model, loaded_model])
+        self.assertEqual(first.text, "transcript 1")
+        self.assertEqual(second.text, "transcript 2")
+        self.assertIn("model_load", second.timings_ms)
+        self.assertIn("audio_prepare", second.timings_ms)
+        self.assertIn("generate_write", second.timings_ms)
+
     def test_non_granite_model_is_rejected(self):
         with self.assertRaises(ValueError):
             build_asr_backend(Settings(asr_model="openai/whisper-tiny"))
