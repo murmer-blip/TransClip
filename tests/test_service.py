@@ -146,6 +146,30 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(asr.keywords, [])
         self.assertTrue(all(asr.non_silent))
 
+    def test_engine_uses_speech_warmup_for_first_mlx_audio_bucket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            speech_wav = Path(tmp) / "speech-warmup.wav"
+            _write_test_wav(speech_wav, seconds=4.0, sample_rate=16000)
+            asr = FakeMlxASR()
+
+            with patch(
+                "transclip.service.engine._mlx_speech_warmup_wav",
+                return_value=speech_wav,
+            ) as speech_warmup:
+                InferenceEngine(
+                    Settings(
+                        sample_rate=16000,
+                        asr_backend="mlx_audio_whisper",
+                    ),
+                    asr_backend=asr,
+                    cleanup_backend=FaithfulRuleCleanupBackend(),
+                    warm_asr=True,
+                )
+
+        speech_warmup.assert_called_once()
+        self.assertEqual(asr.calls[0], speech_wav)
+        self.assertEqual(asr.durations, [4.0, 8.0, 12.0, 16.0, 20.0, 24.0])
+
     def test_engine_warms_remaining_bucket_shapes(self):
         asr = FakeWaveformASR()
         engine = InferenceEngine(
@@ -158,6 +182,76 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(asr.waveform_lengths, [64_000, 96_000, 128_000])
         self.assertEqual(asr.waveform_sample_rates, [16_000, 16_000, 16_000])
+
+    def test_engine_warms_background_mlx_audio_buckets_through_60_seconds(self):
+        asr = FakeMlxASR()
+        engine = InferenceEngine(
+            Settings(sample_rate=16000),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+
+        engine.warm_bucket_shapes(threading.Event())
+
+        self.assertEqual(asr.durations, [28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 52.0, 56.0, 60.0])
+        self.assertEqual(asr.keywords, [])
+        self.assertTrue(all(asr.non_silent))
+
+    def test_background_mlx_warmup_rewarms_speech_bucket_after_long_buckets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            speech_wav = Path(tmp) / "speech-warmup.wav"
+            _write_test_wav(speech_wav, seconds=4.0, sample_rate=16000)
+            asr = FakeMlxASR()
+            engine = InferenceEngine(
+                Settings(
+                    sample_rate=16000,
+                    asr_backend="mlx_audio_whisper",
+                ),
+                asr_backend=asr,
+                cleanup_backend=FaithfulRuleCleanupBackend(),
+            )
+
+            with patch(
+                "transclip.service.engine._mlx_speech_warmup_wav",
+                return_value=speech_wav,
+            ):
+                engine.warm_bucket_shapes(threading.Event())
+
+        self.assertEqual(
+            asr.durations,
+            [28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 52.0, 56.0, 60.0, 4.0],
+        )
+        self.assertEqual(asr.calls[-1], speech_wav)
+
+    def test_background_mlx_warmup_waits_while_dictation_is_busy(self):
+        asr = FakeMlxASR()
+        engine = InferenceEngine(
+            Settings(sample_rate=16000),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+        statuses = ["transcribing", "ready"]
+        engine.dictation_session.status = lambda: statuses.pop(0) if statuses else "ready"
+        stop_event = FakeStopEvent()
+
+        engine.warm_bucket_shapes(stop_event)
+
+        self.assertEqual(stop_event.wait_calls, 1)
+        self.assertEqual(asr.durations, [28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 52.0, 56.0, 60.0])
+
+    def test_background_mlx_warmup_exits_when_stopped(self):
+        asr = FakeMlxASR()
+        engine = InferenceEngine(
+            Settings(sample_rate=16000),
+            asr_backend=asr,
+            cleanup_backend=FaithfulRuleCleanupBackend(),
+        )
+        stop_event = threading.Event()
+        stop_event.set()
+
+        engine.warm_bucket_shapes(stop_event)
+
+        self.assertEqual(asr.durations, [])
 
     def test_bucket_warmup_waits_while_recording(self):
         asr = FakeWaveformASR()
@@ -671,6 +765,15 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(metadata["voice_mode"], "shell")
             self.assertEqual(metadata["voice_trigger"], "shell command")
             self.assertEqual(metadata["shell"]["command"], "ls -la")
+
+def _write_test_wav(path: Path, *, seconds: float, sample_rate: int) -> None:
+    frame_count = int(seconds * sample_rate)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(b"\x01\x00" * frame_count)
 
 
 if __name__ == "__main__":

@@ -55,6 +55,7 @@ class PreparedPathAudio:
     wav_path: Path
     sample_rate: int
     duration_seconds: float
+    padded_duration_seconds: float
     temporary: bool = False
 
 
@@ -63,6 +64,7 @@ EDGE_SILENCE_TRIM_PADDING_SECONDS = 0.2
 MLX_AUDIO_BUCKET_SECONDS = 4.0
 MLX_MIN_AUDIO_SECONDS = 4.0
 MLX_WARM_BUCKET_MAX_SECONDS = 24
+MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS = 60
 MLX_TOKENS_PER_AUDIO_SECOND = 6
 MLX_SAMPLE_LEN_PADDING_TOKENS = 32
 MLX_MIN_SAMPLE_LEN = 48
@@ -131,12 +133,14 @@ class PathAudioPreparer:
             bucket_seconds=self.bucket_seconds,
             minimum_seconds=self.minimum_seconds,
         )
+        padded_duration_seconds = len(mono) / self.target_sample_rate
         changed = changed or bucket_padded
         if not changed and not trimmed:
             return PreparedPathAudio(
                 wav_path=wav_path,
                 sample_rate=sample_rate,
                 duration_seconds=duration_seconds,
+                padded_duration_seconds=padded_duration_seconds,
             )
 
         import soundfile as sf
@@ -148,6 +152,7 @@ class PathAudioPreparer:
             wav_path=output,
             sample_rate=self.target_sample_rate,
             duration_seconds=duration_seconds,
+            padded_duration_seconds=padded_duration_seconds,
             temporary=True,
         )
 
@@ -409,7 +414,11 @@ class MlxAudioASRBackend:
                             language=self.settings.language if self.settings else None,
                             temperature=0.0,
                             sample_len=_mlx_interactive_sample_len(
-                                audio.duration_seconds,
+                                getattr(
+                                    audio,
+                                    "padded_duration_seconds",
+                                    audio.duration_seconds,
+                                ),
                                 default_sample_len=_mlx_default_sample_len(model),
                             ),
                         )

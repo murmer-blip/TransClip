@@ -129,6 +129,37 @@ class ASRTests(unittest.TestCase):
         self.assertIn("audio_prepare", second.timings_ms)
         self.assertIn("generate_write", second.timings_ms)
 
+    def test_mlx_audio_uses_padded_duration_for_decode_shape(self):
+        loaded_model = SimpleNamespace(dims=SimpleNamespace(n_text_ctx=448))
+        generated_options = []
+        backend = MlxAudioASRBackend(
+            "mlx-community/example",
+            Settings(language="en"),
+            local_files_only=False,
+        )
+        backend.audio_preparer = SimpleNamespace(
+            prepare=lambda path: SimpleNamespace(
+                wav_path=path,
+                sample_rate=16000,
+                duration_seconds=27.3,
+                padded_duration_seconds=28.0,
+                temporary=False,
+            )
+        )
+
+        def fake_generate(model, audio_path, output_stem, **kwargs):
+            del model, audio_path, output_stem
+            generated_options.append(kwargs)
+            return SimpleNamespace(text="transcript")
+
+        with (
+            patch("transclip.asr.load_mlx_model", return_value=loaded_model),
+            patch("transclip.asr.generate_transcription", side_effect=fake_generate),
+        ):
+            backend.transcribe(Path("audio.wav"))
+
+        self.assertEqual(generated_options[0]["sample_len"], 200)
+
     def test_non_granite_model_is_rejected(self):
         with self.assertRaises(ValueError):
             build_asr_backend(Settings(asr_model="openai/whisper-tiny"))
@@ -366,6 +397,7 @@ class ASRTests(unittest.TestCase):
         self.assertTrue(audio.temporary)
         self.assertEqual(audio.sample_rate, 10)
         self.assertEqual(audio.duration_seconds, 2.5)
+        self.assertEqual(audio.padded_duration_seconds, 4.0)
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0][2], 10)
         self.assertEqual(len(writes[0][1]), 40)

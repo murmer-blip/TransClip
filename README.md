@@ -334,12 +334,17 @@ through `warm_bucket_shapes_s`, in 2 s steps) are compiled in a background
 thread that yields whenever a recording is active, so the first long utterance
 after a restart does not pay a multi-second ROCm shape compile.
 
+On macOS MLX, startup warms the 4-24 s audio buckets before readiness, then
+the background warmer extends the 28-60 s buckets and finishes by re-warming a
+short spoken 4 s bucket. That keeps normal one-sentence dictation hot after the
+long buckets have been compiled.
+
 | Platform | Batch default | Incremental | Notes |
 |----------|---------------|-------------|-------|
 | Linux GPU (CUDA/ROCm) | Granite NAR | Opt-in | No extra dependencies |
 | Linux/Windows CPU | Granite CPU/AR | No | Requires the granite_nar GPU backend |
 | Windows CUDA | Granite AR | No | granite_nar is not supported on Windows |
-| macOS MLX | MLX Whisper | Pending benchmark | Run `scripts/bench_nar_mlx.py` on an M-series (gate: warm 8 s pass <= 900 ms) |
+| macOS MLX | MLX Whisper | No | Warms MLX audio buckets for low-latency local dictation |
 
 While recording, `GET /record/partial` and the tray's **Copy partial
 transcript** expose the committed text so far. The final text always runs the

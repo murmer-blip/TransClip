@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import subprocess
 import tempfile
 from pathlib import Path
 from time import perf_counter
@@ -10,6 +11,7 @@ from typing import Any, Protocol
 from transclip.asr import (
     GRANITE_NAR_BUCKET_SECONDS,
     MLX_AUDIO_BUCKET_SECONDS,
+    MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS,
     MLX_WARM_BUCKET_MAX_SECONDS,
     ASRBackend,
     TranscriptionResult,
@@ -194,13 +196,27 @@ class InferenceEngine:
         """Load and compile the ASR backend before the service reports ready."""
         sample_rate = max(1, self.settings.sample_rate)
         with tempfile.TemporaryDirectory(prefix="transclip-warmup-") as tmp:
-            for seconds in _asr_warm_seconds(self.asr_backend):
-                pcm16_warmup = _warmup_pcm16_chirp(sample_rate, seconds=seconds)
-                wav_path = write_wav(Path(tmp) / f"warmup-{seconds:g}s.wav", pcm16_warmup, sample_rate)
+            tmp_path = Path(tmp)
+            warm_seconds = _asr_warm_seconds(self.asr_backend)
+            speech_warmup = _mlx_speech_warmup_wav(tmp_path, sample_rate) if _mlx_settings(self.settings) else None
+            for seconds in warm_seconds:
+                if speech_warmup is not None and seconds == warm_seconds[0]:
+                    wav_path = speech_warmup
+                else:
+                    pcm16_warmup = _warmup_pcm16_chirp(sample_rate, seconds=seconds)
+                    wav_path = write_wav(
+                        tmp_path / f"warmup-{seconds:g}s.wav",
+                        pcm16_warmup,
+                        sample_rate,
+                    )
                 self.asr_backend.transcribe(wav_path, keywords=[])
 
     def warm_bucket_shapes(self, stop_event: StopSignal) -> None:
-        """Compile remaining NAR bucket shapes in the background after readiness."""
+        """Compile remaining backend input buckets in the background after readiness."""
+        if self.asr_backend.name == "mlx-audio":
+            self._warm_mlx_audio_buckets(stop_event)
+            return
+
         transcribe_waveform = _waveform_transcriber(self.asr_backend)
         max_seconds = max(0, int(self.settings.warm_bucket_shapes_s))
         if transcribe_waveform is None or max_seconds <= 0:
@@ -211,7 +227,7 @@ class InferenceEngine:
         logger = logging.getLogger(__name__)
         sample_rate = max(1, self.settings.sample_rate)
         for seconds in _bucket_warm_seconds(max_seconds):
-            while self.dictation_session.status() == "recording":
+            while _dictation_busy(self.dictation_session.status()):
                 if stop_event.wait(1.0):
                     return
             if stop_event.is_set():
@@ -225,6 +241,53 @@ class InferenceEngine:
             except Exception:
                 logger.exception("Bucket pre-warm failed at %ss; aborting pre-warm", seconds)
                 return
+
+    def _warm_mlx_audio_buckets(self, stop_event: StopSignal) -> None:
+        logger = logging.getLogger(__name__)
+        sample_rate = max(1, self.settings.sample_rate)
+        with tempfile.TemporaryDirectory(prefix="transclip-bucket-warm-") as tmp:
+            tmp_path = Path(tmp)
+            for seconds in _mlx_background_warm_seconds():
+                while _dictation_busy(self.dictation_session.status()):
+                    if stop_event.wait(1.0):
+                        return
+                if stop_event.is_set():
+                    return
+                try:
+                    pcm16_warmup = _warmup_pcm16_chirp(sample_rate, seconds=seconds)
+                    wav_path = write_wav(
+                        tmp_path / f"warmup-{seconds:g}s.wav",
+                        pcm16_warmup,
+                        sample_rate,
+                    )
+                    self.asr_backend.transcribe(wav_path, keywords=[])
+                    logger.info("Pre-warmed MLX ASR audio bucket at %ss", seconds)
+                except Exception:
+                    logger.exception("MLX audio bucket pre-warm failed at %ss; aborting pre-warm", seconds)
+                    return
+            self._rewarm_mlx_speech_bucket(tmp_path, sample_rate, stop_event)
+
+    def _rewarm_mlx_speech_bucket(
+        self,
+        directory: Path,
+        sample_rate: int,
+        stop_event: StopSignal,
+    ) -> None:
+        if not _mlx_settings(self.settings):
+            return
+        while _dictation_busy(self.dictation_session.status()):
+            if stop_event.wait(1.0):
+                return
+        if stop_event.is_set():
+            return
+        speech_warmup = _mlx_speech_warmup_wav(directory, sample_rate)
+        if speech_warmup is None or stop_event.is_set():
+            return
+        try:
+            self.asr_backend.transcribe(speech_warmup, keywords=[])
+            logging.getLogger(__name__).info("Re-warmed MLX ASR speech bucket")
+        except Exception:
+            logging.getLogger(__name__).exception("MLX speech bucket re-warm failed")
 
     def process_asr_result(
         self,
@@ -335,6 +398,15 @@ def _bucket_warm_seconds(max_seconds: int) -> range:
     return range(bucket_step_s * 2, max_seconds + 1, bucket_step_s)
 
 
+def _mlx_background_warm_seconds() -> list[float]:
+    bucket_seconds = max(1, int(MLX_AUDIO_BUCKET_SECONDS))
+    start = MLX_WARM_BUCKET_MAX_SECONDS + bucket_seconds
+    return [
+        float(seconds)
+        for seconds in range(start, MLX_BACKGROUND_WARM_BUCKET_MAX_SECONDS + 1, bucket_seconds)
+    ]
+
+
 def _asr_warm_seconds(backend: ASRBackend) -> list[float]:
     if backend.name == "mlx-audio":
         bucket_seconds = max(1, int(MLX_AUDIO_BUCKET_SECONDS))
@@ -343,6 +415,62 @@ def _asr_warm_seconds(backend: ASRBackend) -> list[float]:
             for seconds in range(bucket_seconds, MLX_WARM_BUCKET_MAX_SECONDS + 1, bucket_seconds)
         ]
     return [0.25]
+
+
+def _mlx_settings(settings: Settings) -> bool:
+    return "mlx" in settings.asr_backend
+
+
+def _mlx_speech_warmup_wav(directory: Path, sample_rate: int) -> Path | None:
+    runtime = get_runtime()
+    if runtime.system() != "Darwin":
+        return None
+    if not runtime.which("say") or not runtime.which("afconvert"):
+        return None
+
+    data_format = f"LEI16@{sample_rate}"
+    caf_path = directory / "speech-warmup.caf"
+    wav_path = directory / "speech-warmup.wav"
+    try:
+        runtime.run(
+            [
+                "say",
+                "-o",
+                str(caf_path),
+                f"--data-format={data_format}",
+                "Testing one, two, three.",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=10,
+        )
+        runtime.run(
+            [
+                "afconvert",
+                "-f",
+                "WAVE",
+                "-d",
+                data_format,
+                str(caf_path),
+                str(wav_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logging.getLogger(__name__).debug(
+            "Speech ASR warmup generation failed; using chirp fallback",
+            exc_info=True,
+        )
+        return None
+    return wav_path if wav_path.exists() else None
+
+
+def _dictation_busy(status: str) -> bool:
+    return status in {"recording", "stopping", "transcribing"}
 
 
 def _warmup_pcm16_chirp(sample_rate: int, seconds: float = 0.25) -> bytes:
