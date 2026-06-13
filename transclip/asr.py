@@ -423,6 +423,8 @@ class MlxAudioASRBackend:
                             output_stem,
                             language=self.settings.language if self.settings else None,
                             temperature=0.0,
+                            return_timestamps=False,
+                            condition_on_previous_text=False,
                             sample_len=_mlx_interactive_sample_len(
                                 getattr(
                                     audio,

@@ -122,6 +122,8 @@ class ASRTests(unittest.TestCase):
         self.assertEqual(generated_models, [loaded_model, loaded_model])
         self.assertEqual([item["language"] for item in generated_options], ["en", "en"])
         self.assertEqual([item["temperature"] for item in generated_options], [0.0, 0.0])
+        self.assertEqual([item["return_timestamps"] for item in generated_options], [False, False])
+        self.assertEqual([item["condition_on_previous_text"] for item in generated_options], [False, False])
         self.assertEqual([item["sample_len"] for item in generated_options], [48, 128])
         self.assertEqual(first.text, "transcript 1")
         self.assertEqual(second.text, "transcript 2")
