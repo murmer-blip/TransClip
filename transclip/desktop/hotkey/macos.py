@@ -96,6 +96,7 @@ STATE={shlex.quote(_macos_path_text(state_path))}
 BASE={shlex.quote(base_url)}
 MAX_SECONDS={int(stop_timeout_seconds)}
 STALE_LOCK_SECONDS={int(stale_lock_seconds)}
+STOP_POLL_SECONDS=0.05
 LOCK=/tmp/transclip-toggle.lock
 
 mkdir -p "$(dirname "$LOG")"
@@ -145,7 +146,10 @@ wait_for_stop_response() {{
           ;;
       esac
     fi
-    sleep 0.2
+    if [ -f "$stop_status_file" ]; then
+      break
+    fi
+    sleep "$STOP_POLL_SECONDS"
   done
   wait "$stop_pid" 2>/dev/null || true
 }}
