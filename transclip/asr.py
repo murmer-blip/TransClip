@@ -60,6 +60,8 @@ class PreparedPathAudio:
 
 EDGE_SILENCE_TRIM_THRESHOLD = 0.003
 EDGE_SILENCE_TRIM_PADDING_SECONDS = 0.2
+MLX_AUDIO_BUCKET_SECONDS = 4.0
+MLX_MIN_AUDIO_SECONDS = 4.0
 MLX_TOKENS_PER_AUDIO_SECOND = 6
 MLX_SAMPLE_LEN_PADDING_TOKENS = 32
 MLX_MIN_SAMPLE_LEN = 48
@@ -102,8 +104,16 @@ class TorchAudioPreparer:
 
 
 class PathAudioPreparer:
-    def __init__(self, target_sample_rate: int = 16000):
+    def __init__(
+        self,
+        target_sample_rate: int = 16000,
+        *,
+        bucket_seconds: float = 0.0,
+        minimum_seconds: float = 0.0,
+    ):
         self.target_sample_rate = target_sample_rate
+        self.bucket_seconds = bucket_seconds
+        self.minimum_seconds = minimum_seconds
         self.loader = AudioLoader(target_sample_rate)
 
     def prepare(self, wav_path: Path) -> PreparedPathAudio:
@@ -114,6 +124,13 @@ class PathAudioPreparer:
             mono = _linear_resample(mono, sample_rate, self.target_sample_rate)
         mono, trimmed = _trim_edge_silence(mono, self.target_sample_rate)
         duration_seconds = len(mono) / self.target_sample_rate
+        mono, bucket_padded = _pad_to_audio_bucket(
+            mono,
+            self.target_sample_rate,
+            bucket_seconds=self.bucket_seconds,
+            minimum_seconds=self.minimum_seconds,
+        )
+        changed = changed or bucket_padded
         if not changed and not trimmed:
             return PreparedPathAudio(
                 wav_path=wav_path,
@@ -337,7 +354,10 @@ class MlxAudioASRBackend:
         self._resolved_path: str | None = None
         self._loaded_model: Any | None = None
         self._model_lock = threading.RLock()
-        self.audio_preparer = PathAudioPreparer()
+        self.audio_preparer = PathAudioPreparer(
+            bucket_seconds=MLX_AUDIO_BUCKET_SECONDS,
+            minimum_seconds=MLX_MIN_AUDIO_SECONDS,
+        )
         if validate_cache:
             self._model_path()
 
@@ -543,6 +563,31 @@ def _trim_edge_silence(
     if start == 0 and end == len(samples):
         return samples, False
     return samples[start:end], True
+
+
+def _pad_to_audio_bucket(
+    samples: Any,
+    sample_rate: int,
+    *,
+    bucket_seconds: float,
+    minimum_seconds: float,
+) -> tuple[Any, bool]:
+    if bucket_seconds <= 0 and minimum_seconds <= 0:
+        return samples, False
+    import numpy as np
+
+    current = len(samples)
+    minimum = max(0, round(sample_rate * minimum_seconds))
+    if bucket_seconds > 0:
+        bucket = max(1, round(sample_rate * bucket_seconds))
+        target = max(minimum, math.ceil(max(current, 1) / bucket) * bucket)
+    else:
+        target = minimum
+    if target <= current:
+        return samples, False
+    padded = np.zeros(target, dtype=getattr(samples, "dtype", np.float32))
+    padded[:current] = samples
+    return padded, True
 
 
 def _mlx_default_sample_len(model: Any) -> int:

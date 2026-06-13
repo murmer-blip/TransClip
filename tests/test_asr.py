@@ -346,6 +346,32 @@ class ASRTests(unittest.TestCase):
             np.array([0.0, 0.0, 0.1, 0.1, 0.1, 0.1, 0.0, 0.0], dtype=np.float32),
         )
 
+    def test_path_audio_preparer_pads_to_stable_audio_bucket_without_extending_duration(self):
+        samples = np.array([[0.1]] * 25, dtype=np.float32)
+        writes = []
+        fake_soundfile = SimpleNamespace(
+            read=lambda *_args, **_kwargs: (samples, 10),
+            write=lambda path, data, sample_rate: writes.append(
+                (Path(path), np.array(data), sample_rate)
+            ),
+        )
+
+        with patch.dict("sys.modules", {"soundfile": fake_soundfile}):
+            audio = PathAudioPreparer(
+                target_sample_rate=10,
+                bucket_seconds=4.0,
+                minimum_seconds=4.0,
+            ).prepare(Path("sample.wav"))
+
+        self.assertTrue(audio.temporary)
+        self.assertEqual(audio.sample_rate, 10)
+        self.assertEqual(audio.duration_seconds, 2.5)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][2], 10)
+        self.assertEqual(len(writes[0][1]), 40)
+        np.testing.assert_allclose(writes[0][1][:25], 0.1)
+        np.testing.assert_allclose(writes[0][1][25:], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
