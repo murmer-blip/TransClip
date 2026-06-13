@@ -54,11 +54,15 @@ class PreparedAudio:
 class PreparedPathAudio:
     wav_path: Path
     sample_rate: int
+    duration_seconds: float
     temporary: bool = False
 
 
 EDGE_SILENCE_TRIM_THRESHOLD = 0.003
 EDGE_SILENCE_TRIM_PADDING_SECONDS = 0.2
+MLX_TOKENS_PER_AUDIO_SECOND = 6
+MLX_SAMPLE_LEN_PADDING_TOKENS = 32
+MLX_MIN_SAMPLE_LEN = 48
 
 
 class AudioLoader:
@@ -109,15 +113,25 @@ class PathAudioPreparer:
         if sample_rate != self.target_sample_rate:
             mono = _linear_resample(mono, sample_rate, self.target_sample_rate)
         mono, trimmed = _trim_edge_silence(mono, self.target_sample_rate)
+        duration_seconds = len(mono) / self.target_sample_rate
         if not changed and not trimmed:
-            return PreparedPathAudio(wav_path=wav_path, sample_rate=sample_rate)
+            return PreparedPathAudio(
+                wav_path=wav_path,
+                sample_rate=sample_rate,
+                duration_seconds=duration_seconds,
+            )
 
         import soundfile as sf
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
             output = Path(handle.name)
         sf.write(str(output), mono, self.target_sample_rate)
-        return PreparedPathAudio(wav_path=output, sample_rate=self.target_sample_rate, temporary=True)
+        return PreparedPathAudio(
+            wav_path=output,
+            sample_rate=self.target_sample_rate,
+            duration_seconds=duration_seconds,
+            temporary=True,
+        )
 
 
 DefaultASRAudioPreparer = TorchAudioPreparer
@@ -373,6 +387,10 @@ class MlxAudioASRBackend:
                             output_stem,
                             language=self.settings.language if self.settings else None,
                             temperature=0.0,
+                            sample_len=_mlx_interactive_sample_len(
+                                audio.duration_seconds,
+                                default_sample_len=_mlx_default_sample_len(model),
+                            ),
                         )
                     text = getattr(result, "text", None) or str(result)
             finally:
@@ -525,3 +543,17 @@ def _trim_edge_silence(
     if start == 0 and end == len(samples):
         return samples, False
     return samples[start:end], True
+
+
+def _mlx_default_sample_len(model: Any) -> int:
+    dims = getattr(model, "dims", None)
+    n_text_ctx = getattr(dims, "n_text_ctx", None)
+    if isinstance(n_text_ctx, int) and n_text_ctx > 0:
+        return max(1, n_text_ctx // 2)
+    return 224
+
+
+def _mlx_interactive_sample_len(audio_seconds: float, *, default_sample_len: int) -> int:
+    scaled = math.ceil(max(0.0, audio_seconds) * MLX_TOKENS_PER_AUDIO_SECOND)
+    desired = max(MLX_MIN_SAMPLE_LEN, scaled + MLX_SAMPLE_LEN_PADDING_TOKENS)
+    return min(max(1, default_sample_len), desired)
