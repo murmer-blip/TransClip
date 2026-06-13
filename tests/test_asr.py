@@ -11,6 +11,7 @@ from transclip.asr import (
     GraniteSpeechNarTransformersBackend,
     GraniteSpeechTransformersBackend,
     MlxAudioASRBackend,
+    PathAudioPreparer,
     _configure_rocm_nar_attention_env,
     _granite_nar_dtype,
     _pad_nar_waveform_to_bucket,
@@ -314,6 +315,28 @@ class ASRTests(unittest.TestCase):
         self.assertEqual(audio.sample_rate, 16000)
         np.testing.assert_allclose(audio.wav.data, np.array([[2.0, 6.0]], dtype=np.float32))
         self.assertEqual(resample_calls, [(8000, 16000)])
+
+    def test_path_audio_preparer_trims_edge_silence_before_writing_temp_wav(self):
+        samples = np.array([[0.0]] * 5 + [[0.1]] * 4 + [[0.0]] * 5, dtype=np.float32)
+        writes = []
+        fake_soundfile = SimpleNamespace(
+            read=lambda *_args, **_kwargs: (samples, 10),
+            write=lambda path, data, sample_rate: writes.append(
+                (Path(path), np.array(data), sample_rate)
+            ),
+        )
+
+        with patch.dict("sys.modules", {"soundfile": fake_soundfile}):
+            audio = PathAudioPreparer(target_sample_rate=10).prepare(Path("sample.wav"))
+
+        self.assertTrue(audio.temporary)
+        self.assertEqual(audio.sample_rate, 10)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][2], 10)
+        np.testing.assert_allclose(
+            writes[0][1],
+            np.array([0.0, 0.0, 0.1, 0.1, 0.1, 0.1, 0.0, 0.0], dtype=np.float32),
+        )
 
 
 if __name__ == "__main__":

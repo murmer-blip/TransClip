@@ -57,6 +57,10 @@ class PreparedPathAudio:
     temporary: bool = False
 
 
+EDGE_SILENCE_TRIM_THRESHOLD = 0.003
+EDGE_SILENCE_TRIM_PADDING_SECONDS = 0.2
+
+
 class AudioLoader:
     def __init__(self, target_sample_rate: int = 16000):
         self.target_sample_rate = target_sample_rate
@@ -100,14 +104,16 @@ class PathAudioPreparer:
 
     def prepare(self, wav_path: Path) -> PreparedPathAudio:
         samples, sample_rate = self.loader.load_samples(wav_path)
-        if sample_rate == self.target_sample_rate and samples.shape[1] == 1:
+        mono = self.loader.fold_mono(samples)
+        changed = samples.shape[1] != 1 or sample_rate != self.target_sample_rate
+        if sample_rate != self.target_sample_rate:
+            mono = _linear_resample(mono, sample_rate, self.target_sample_rate)
+        mono, trimmed = _trim_edge_silence(mono, self.target_sample_rate)
+        if not changed and not trimmed:
             return PreparedPathAudio(wav_path=wav_path, sample_rate=sample_rate)
 
         import soundfile as sf
 
-        mono = self.loader.fold_mono(samples)
-        if sample_rate != self.target_sample_rate:
-            mono = _linear_resample(mono, sample_rate, self.target_sample_rate)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
             output = Path(handle.name)
         sf.write(str(output), mono, self.target_sample_rate)
@@ -497,3 +503,25 @@ def _linear_resample(samples: Any, source_rate: int, target_rate: int) -> Any:
     source_positions = np.linspace(0.0, 1.0, num=len(samples), endpoint=True)
     target_positions = np.linspace(0.0, 1.0, num=target_length, endpoint=True)
     return np.interp(target_positions, source_positions, samples).astype(samples.dtype, copy=False)
+
+
+def _trim_edge_silence(
+    samples: Any,
+    sample_rate: int,
+    *,
+    threshold: float = EDGE_SILENCE_TRIM_THRESHOLD,
+    padding_seconds: float = EDGE_SILENCE_TRIM_PADDING_SECONDS,
+) -> tuple[Any, bool]:
+    import numpy as np
+
+    if len(samples) == 0:
+        return samples, False
+    active = np.flatnonzero(np.abs(samples) > threshold)
+    if active.size == 0:
+        return samples, False
+    padding = max(0, round(sample_rate * padding_seconds))
+    start = max(0, int(active[0]) - padding)
+    end = min(len(samples), int(active[-1]) + padding + 1)
+    if start == 0 and end == len(samples):
+        return samples, False
+    return samples[start:end], True
